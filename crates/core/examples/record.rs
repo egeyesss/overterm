@@ -1,7 +1,7 @@
 //! Record a timestamped PTY transcript for use as a detection fixture.
 //!
 //! Usage:
-//!   record <out.ndjson> <script.txt> <timeout_ms> <cmd> [args...]
+//!   record <out.ndjson> <script.txt> <timeout_ms> <cols> <rows> <cmd> [args...]
 //!
 //! The script file drives input. Each non-empty line is:
 //!   <t_ms> <text>
@@ -64,22 +64,26 @@ fn parse_script(path: &Path) -> Vec<(u64, Vec<u8>)> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() < 4 {
-        eprintln!("usage: record <out.ndjson> <script.txt> <timeout_ms> <cmd> [args...]");
+    if args.len() < 6 {
+        eprintln!(
+            "usage: record <out.ndjson> <script.txt> <timeout_ms> <cols> <rows> <cmd> [args...]"
+        );
         std::process::exit(2);
     }
     let out_path = PathBuf::from(&args[0]);
     let script = parse_script(Path::new(&args[1]));
     let timeout = Duration::from_millis(args[2].parse().expect("bad timeout"));
-    let command = args[3].clone();
-    let cmd_args = args[4..].to_vec();
+    let cols: u16 = args[3].parse().expect("bad cols");
+    let rows: u16 = args[4].parse().expect("bad rows");
+    let command = args[5].clone();
+    let cmd_args = args[6..].to_vec();
 
     let config = SpawnConfig {
         command: Some(command),
         args: cmd_args,
         cwd: Some(std::env::current_dir().expect("cwd")),
-        cols: 100,
-        rows: 30,
+        cols,
+        rows,
         ..Default::default()
     };
     let (mut session, output) = PtySession::spawn(config).expect("spawn");
@@ -98,23 +102,30 @@ fn main() {
 
     let mut events: Vec<Event> = Vec::new();
     let mut script_iter = script.into_iter().peekable();
+    // Bytes of the current script entry still to be typed. Input goes out
+    // one byte per loop pass (~25ms apart) so it reads as human typing.
+    // TUIs treat a whole line arriving in one chunk as a paste, and paste
+    // handling can swallow the trailing enter instead of submitting.
+    let mut pending: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
     let mut child_gone = false;
 
     while start.elapsed() < timeout && !child_gone {
-        while let Some(&(t, _)) = script_iter.peek() {
-            if start.elapsed() >= Duration::from_millis(t) {
-                let (t, bytes) = script_iter.next().unwrap();
-                session.write(&bytes).expect("write input");
-                events.push(Event {
-                    t_ms: t,
-                    dir: Dir::Input,
-                    bytes,
-                });
-            } else {
-                break;
-            }
+        if pending.is_empty()
+            && let Some(&(t, _)) = script_iter.peek()
+            && start.elapsed() >= Duration::from_millis(t)
+        {
+            let (_, bytes) = script_iter.next().unwrap();
+            pending.extend(bytes);
         }
-        match rx.recv_timeout(Duration::from_millis(10)) {
+        if let Some(byte) = pending.pop_front() {
+            session.write(&[byte]).expect("write input");
+            events.push(Event {
+                t_ms: start.elapsed().as_millis() as u64,
+                dir: Dir::Input,
+                bytes: vec![byte],
+            });
+        }
+        match rx.recv_timeout(Duration::from_millis(25)) {
             Ok(chunk) => events.push(Event {
                 t_ms: start.elapsed().as_millis() as u64,
                 dir: Dir::Output,

@@ -31,6 +31,14 @@ pub struct HeuristicConfig {
     pub prompt_pattern: Regex,
     /// Rows to scan, from the cursor row upward.
     pub prompt_scan_rows: u16,
+    /// Pattern that marks the screen as still working even though output
+    /// paused. Needed for TUIs that stream in batches: between batches
+    /// the cursor rests in their input box, which would otherwise read
+    /// as a prompt. Claude Code shows "esc to interrupt" in its status
+    /// area for the entire time it works.
+    pub busy_pattern: Regex,
+    /// Bottom rows of the screen scanned for `busy_pattern`.
+    pub busy_scan_rows: u16,
     /// Initial terminal size for the screen model. Live sessions pass the
     /// real size and update it through `resize`.
     pub cols: u16,
@@ -49,6 +57,8 @@ impl Default for HeuristicConfig {
             prompt_pattern: Regex::new(r"[❯$%#]\s*$|^\s*[❯>]\s|╰")
                 .expect("default prompt pattern is valid"),
             prompt_scan_rows: 2,
+            busy_pattern: Regex::new(r"esc to interrupt").expect("default busy pattern is valid"),
+            busy_scan_rows: 8,
             cols: 100,
             rows: 30,
         }
@@ -80,6 +90,10 @@ pub struct HeuristicAdapter {
     waiting_for_quiet: bool,
     /// A burst signal was already emitted for the current activity.
     burst_announced: bool,
+    /// Set by OVERTERM_DETECT_DEBUG. Logs the screen state to stderr when
+    /// the session is quiet but the prompt check keeps failing.
+    debug: bool,
+    last_debug: Option<Instant>,
 }
 
 impl HeuristicAdapter {
@@ -94,6 +108,8 @@ impl HeuristicAdapter {
             last_output: None,
             waiting_for_quiet: false,
             burst_announced: false,
+            debug: std::env::var_os("OVERTERM_DETECT_DEBUG").is_some(),
+            last_debug: None,
         }
     }
 
@@ -134,6 +150,12 @@ impl HeuristicAdapter {
             !text.trim().is_empty() && self.cfg.prompt_pattern.is_match(&text)
         })
     }
+
+    fn busy_hint_on_screen(&self) -> bool {
+        let (rows, _) = self.parser.screen().size();
+        let first = rows.saturating_sub(self.cfg.busy_scan_rows);
+        (first..rows).any(|row| self.cfg.busy_pattern.is_match(&self.row_text(row)))
+    }
 }
 
 impl Adapter for HeuristicAdapter {
@@ -171,12 +193,32 @@ impl Adapter for HeuristicAdapter {
         if now.duration_since(last) < self.cfg.quiet {
             return Vec::new();
         }
+        if self.busy_hint_on_screen() {
+            return Vec::new();
+        }
         if self.prompt_at_cursor() {
             self.waiting_for_quiet = false;
             self.burst_announced = false;
             return vec![Signal::Quiescence {
                 quiet_ms: self.cfg.quiet.as_millis() as u64,
             }];
+        }
+        if self.debug
+            && self
+                .last_debug
+                .is_none_or(|t| now.duration_since(t) > Duration::from_secs(3))
+        {
+            self.last_debug = Some(now);
+            let (cur_row, cur_col) = self.parser.screen().cursor_position();
+            let (rows, cols) = self.parser.screen().size();
+            eprintln!(
+                "[detect] quiet {}ms, no prompt. grid {rows}x{cols}, cursor ({cur_row},{cur_col})",
+                now.duration_since(last).as_millis()
+            );
+            let first = cur_row.saturating_sub(3);
+            for row in first..=cur_row.min(rows - 1) {
+                eprintln!("[detect]   row {row}: {:?}", self.row_text(row).trim_end());
+            }
         }
         Vec::new()
     }
@@ -270,6 +312,26 @@ mod tests {
         );
         a.feed(frame.as_bytes(), at(base, 0));
         let signals = a.tick(at(base, 500));
+        assert_eq!(signals, vec![Signal::Quiescence { quiet_ms: 400 }]);
+    }
+
+    #[test]
+    fn busy_hint_suppresses_quiescence_between_stream_batches() {
+        let base = Instant::now();
+        let mut a = adapter();
+        // A TUI with the cursor resting in its input box while its status
+        // row still says it is working. Output pauses between batches.
+        let frame = concat!(
+            "\x1b[2J",
+            "\x1b[25;1H\u{276f} ",
+            "\x1b[27;1H\u{2733} Reticulating\u{2026} (esc to interrupt)",
+            "\x1b[25;3H",
+        );
+        a.feed(frame.as_bytes(), at(base, 0));
+        assert!(a.tick(at(base, 1500)).is_empty());
+        // The hint clears once the work is finished.
+        a.feed(b"\x1b[27;1H\x1b[2K\x1b[25;3H", at(base, 2000));
+        let signals = a.tick(at(base, 2500));
         assert_eq!(signals, vec![Signal::Quiescence { quiet_ms: 400 }]);
     }
 

@@ -115,6 +115,44 @@ fn zsh_silent_command_stays_busy_until_prompt_returns() {
 }
 
 #[test]
+fn claude_long_streamed_answer_holds_busy_until_the_end() {
+    // Recording: claude launched inside zsh -l at 120x38, trust dialog
+    // accepted, then a question whose answer streams in batches from
+    // ~13s to ~34s. Streaming pauses between batches while the cursor
+    // rests in the input box, so without the busy-hint hold this replay
+    // flapped through 17 false Busy/Idle cycles.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join("claude-long-answer.ndjson");
+    let events = read_fixture(&path).expect("fixture should parse");
+    let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(HeuristicConfig {
+        cols: 120,
+        rows: 38,
+        ..Default::default()
+    }))]);
+    let changes = replay(&mut detector, &events, 100, 1000);
+
+    // The question submit may resolve exactly once, after streaming ends.
+    let during_stream: Vec<_> = changes
+        .iter()
+        .filter(|(t, _)| *t > 14000 && *t < 34000)
+        .collect();
+    assert!(
+        during_stream.is_empty(),
+        "state flapped during streaming: {during_stream:#?}"
+    );
+    let after: Vec<_> = changes
+        .iter()
+        .filter(|(t, c)| *t >= 34000 && *t < 60000 && c.to == AgentState::Done)
+        .collect();
+    assert_eq!(
+        after.len(),
+        1,
+        "expected one Done after streaming: {changes:#?}"
+    );
+}
+
+#[test]
 fn claude_idle_repaints_do_not_disturb_done() {
     // The TUI repaints a status row occasionally while idle (at roughly
     // 14300, 29300 and 37300ms in this recording). None of those small

@@ -72,6 +72,17 @@ pub fn spawn_session(
         // Login shell so GUI-launched instances still get the user's PATH
         // (needed to find `claude` and friends).
         args: vec!["-l".into()],
+        // A dev build launched from inside a Claude Code session inherits
+        // these markers, and claude run in our shell then believes it is a
+        // nested child session. A normal app launch never has them.
+        env_remove: [
+            "CLAUDECODE",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_SSE_PORT",
+        ]
+        .map(String::from)
+        .to_vec(),
         cols,
         rows,
         ..Default::default()
