@@ -48,8 +48,9 @@ fn shell_session_flips_busy_done_per_command() {
 
 #[test]
 fn claude_session_reaches_done_when_answer_completes() {
-    // Recording: real Claude Code TUI. Question submitted at 7000ms, the
-    // streamed answer ends around 11300ms, /exit submitted at 40000ms.
+    // Recording: real Claude Code TUI. Trust dialog accepted at 4000ms,
+    // question submitted at 7000ms, the streamed answer ends around
+    // 11300ms, /exit submitted at 40000ms.
     let changes = run("claude-simple-question.ndjson");
     assert_eq!(
         states(&changes),
@@ -58,21 +59,59 @@ fn claude_session_reaches_done_when_answer_completes() {
             AgentState::Done,
             AgentState::Busy,
             AgentState::Done,
+            AgentState::Busy,
         ],
         "full sequence: {changes:#?}"
     );
     // Busy comes from the startup paint burst.
     assert!(matches!(changes[0].1.cause, Signal::OutputBurst));
+    // The welcome screen settles with the cursor in the input row, so
+    // the session reads ready before the question is even typed.
+    assert!(
+        changes[1].0 > 4000 && changes[1].0 < 7000,
+        "welcome-settled Done fired at {}ms",
+        changes[1].0
+    );
+    assert_eq!(changes[2].0, 7000);
     // Done must fire shortly after the answer stops streaming, well
     // before the next idle repaint at ~14300ms.
     assert!(
-        changes[1].0 > 11300 && changes[1].0 < 12500,
+        changes[3].0 > 11300 && changes[3].0 < 12500,
         "answer-finished Done fired at {}ms",
-        changes[1].0
+        changes[3].0
     );
     // /exit flips back to Busy.
-    assert_eq!(changes[2].0, 40000);
-    assert!(matches!(changes[2].1.cause, Signal::UserInput));
+    assert_eq!(changes[4].0, 40000);
+    assert!(matches!(changes[4].1.cause, Signal::UserInput));
+}
+
+#[test]
+fn zsh_silent_command_stays_busy_until_prompt_returns() {
+    // Recording: /bin/zsh with an empty enter at 1000ms (which leaves a
+    // bare prompt row on screen), `sleep 2` at 2200ms and `echo after`
+    // at 5500ms. The stale prompt row above the echoed command must not
+    // produce an early Done while sleep runs silently.
+    let changes = run("zsh-sleep.ndjson");
+    assert_eq!(
+        states(&changes),
+        vec![
+            AgentState::Busy,
+            AgentState::Done,
+            AgentState::Busy,
+            AgentState::Done,
+            AgentState::Busy,
+            AgentState::Done,
+        ],
+        "full sequence: {changes:#?}"
+    );
+    // The sleep submit at 2200ms may only resolve after sleep ends at
+    // ~4200ms plus the quiet window.
+    assert_eq!(changes[2].0, 2200);
+    assert!(
+        changes[3].0 > 4400 && changes[3].0 < 5500,
+        "sleep Done fired at {}ms",
+        changes[3].0
+    );
 }
 
 #[test]

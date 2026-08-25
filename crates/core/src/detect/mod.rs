@@ -81,6 +81,8 @@ pub trait Adapter: Send {
     /// Called periodically so time-based signals (quiescence) can fire
     /// without waiting for the next output chunk.
     fn tick(&mut self, now: Instant) -> Vec<Signal>;
+    /// The terminal was resized. Adapters that model the screen need this.
+    fn resize(&mut self, _cols: u16, _rows: u16) {}
 }
 
 /// One applied transition, with the signal that caused it.
@@ -140,6 +142,13 @@ impl Detector {
         }
     }
 
+    /// Forward a terminal resize to the adapters.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        for adapter in &mut self.adapters {
+            adapter.resize(cols, rows);
+        }
+    }
+
     /// Run periodic time-based checks. Call every ~100ms.
     pub fn tick(&mut self, now: Instant) -> Vec<StateChange> {
         let mut changes = Vec::new();
@@ -181,7 +190,7 @@ impl Detector {
                 Some(Busy)
             }
             (Idle | Done | NeedsInput, OutputBurst) => Some(Busy),
-            (Busy, Quiescence { .. }) => {
+            (Busy | NeedsInput, Quiescence { .. }) => {
                 if self.awaiting_result {
                     self.awaiting_result = false;
                     Some(Done)
@@ -234,6 +243,17 @@ mod tests {
         d.apply(Signal::UserInput);
         assert_eq!(d.apply(Signal::Bell).unwrap().to, AgentState::NeedsInput);
         assert_eq!(d.apply(Signal::UserInput).unwrap().to, AgentState::Busy);
+    }
+
+    #[test]
+    fn quiescence_resolves_needs_input() {
+        // A bell mid-run flags attention; if the prompt then returns with
+        // no user action, the work still finished.
+        let mut d = detector();
+        d.apply(Signal::UserInput);
+        d.apply(Signal::Bell);
+        assert_eq!(d.state(), AgentState::NeedsInput);
+        assert_eq!(d.apply(quiet()).unwrap().to, AgentState::Done);
     }
 
     #[test]

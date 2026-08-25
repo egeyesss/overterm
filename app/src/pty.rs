@@ -79,9 +79,12 @@ pub fn spawn_session(
     let (session, mut output) = PtySession::spawn(config).map_err(|e| e.to_string())?;
     let id = session.id().to_string();
 
-    let detector = Arc::new(Mutex::new(Detector::new(vec![Box::new(
-        HeuristicAdapter::new(HeuristicConfig::default()),
-    )])));
+    let heuristic = HeuristicAdapter::new(HeuristicConfig {
+        cols,
+        rows,
+        ..Default::default()
+    });
+    let detector = Arc::new(Mutex::new(Detector::new(vec![Box::new(heuristic)])));
     let alive = Arc::new(AtomicBool::new(true));
 
     sessions.0.lock().unwrap().insert(
@@ -175,6 +178,7 @@ pub fn resize_pty(
     let handle = sessions
         .get(&session_id)
         .ok_or_else(|| format!("no session {session_id}"))?;
+    handle.detector.lock().unwrap().resize(cols, rows);
     handle.session.resize(cols, rows).map_err(|e| e.to_string())
 }
 
