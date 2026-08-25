@@ -7,7 +7,6 @@
 //! signal has been seen for a session, heuristic signals are ignored so
 //! the quiescence timer cannot fight exact events.
 
-pub mod ansi;
 pub mod heuristic;
 pub mod replay;
 
