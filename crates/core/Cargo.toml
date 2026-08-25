@@ -1,0 +1,13 @@
+[package]
+name = "overterm-core"
+description = "PTY sessions and agent-state detection for OverTerm. No UI dependencies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+portable-pty = "0.9"
+thiserror.workspace = true
+uuid.workspace = true
