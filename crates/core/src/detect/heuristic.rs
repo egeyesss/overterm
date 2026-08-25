@@ -90,6 +90,9 @@ pub struct HeuristicAdapter {
     waiting_for_quiet: bool,
     /// A burst signal was already emitted for the current activity.
     burst_announced: bool,
+    /// Signature of the screen after the last chunk, used to tell real
+    /// display activity from output that changes nothing visible.
+    screen_sig: u64,
     /// Set by OVERTERM_DETECT_DEBUG. Logs the screen state to stderr when
     /// the session is quiet but the prompt check keeps failing.
     debug: bool,
@@ -100,7 +103,7 @@ impl HeuristicAdapter {
     pub fn new(cfg: HeuristicConfig) -> Self {
         let parser =
             vt100::Parser::new_with_callbacks(cfg.rows, cfg.cols, 0, BellCounter::default());
-        Self {
+        let mut adapter = Self {
             cfg,
             parser,
             seen_bells: 0,
@@ -108,9 +111,22 @@ impl HeuristicAdapter {
             last_output: None,
             waiting_for_quiet: false,
             burst_announced: false,
+            screen_sig: 0,
             debug: std::env::var_os("OVERTERM_DETECT_DEBUG").is_some(),
             last_debug: None,
-        }
+        };
+        adapter.screen_sig = adapter.screen_signature();
+        adapter
+    }
+
+    fn screen_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        let screen = self.parser.screen();
+        screen.contents().hash(&mut hasher);
+        screen.cursor_position().hash(&mut hasher);
+        screen.size().hash(&mut hasher);
+        hasher.finish()
     }
 
     fn expire_window(&mut self, now: Instant) {
@@ -168,6 +184,16 @@ impl Adapter for HeuristicAdapter {
             signals.push(Signal::Bell);
         }
         self.seen_bells = bells;
+
+        // Output that leaves the screen untouched is not activity. Claude
+        // polls the terminal with cursor position queries several times a
+        // second while idle, and counting those kept the quiet timer from
+        // ever expiring. Identical repaints fall away for the same reason.
+        let sig = self.screen_signature();
+        if sig == self.screen_sig {
+            return signals;
+        }
+        self.screen_sig = sig;
 
         self.expire_window(now);
         self.window.push_back((now, bytes.len()));
@@ -340,6 +366,35 @@ mod tests {
         // The hint clears once the work is finished.
         a.feed(b"\x1b[27;1H\x1b[2K\x1b[25;3H", at(base, 2000));
         let signals = a.tick(at(base, 2500));
+        assert_eq!(signals, vec![Signal::Quiescence { quiet_ms: 400 }]);
+    }
+
+    #[test]
+    fn cursor_position_queries_do_not_reset_the_quiet_timer() {
+        let base = Instant::now();
+        let mut a = adapter();
+        a.feed(b"user@mac ~ $ ", at(base, 0));
+        // Claude polls the terminal for its cursor position several times
+        // a second even when idle. The queries paint nothing, so they must
+        // not count as output activity.
+        for i in 1..10u64 {
+            a.feed(b"\x1b[?6n", at(base, i * 200));
+        }
+        let signals = a.tick(at(base, 1900));
+        assert_eq!(signals, vec![Signal::Quiescence { quiet_ms: 400 }]);
+    }
+
+    #[test]
+    fn identical_repaint_does_not_reset_the_quiet_timer() {
+        let base = Instant::now();
+        let mut a = adapter();
+        let frame = "\x1b[2J\x1b[5;1Hstatus line\x1b[10;1H\u{276f} "
+            .as_bytes()
+            .to_vec();
+        a.feed(&frame, at(base, 0));
+        a.feed(&frame, at(base, 300));
+        a.feed(&frame, at(base, 600));
+        let signals = a.tick(at(base, 700));
         assert_eq!(signals, vec![Signal::Quiescence { quiet_ms: 400 }]);
     }
 
