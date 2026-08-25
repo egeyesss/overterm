@@ -12,5 +12,13 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 overterm-core = { path = "../crates/core" }
 tauri = { version = "2", features = [] }
+tauri-plugin-global-shortcut = "2"
 serde.workspace = true
 serde_json.workspace = true
+
+# The non-activating floating panel the overlay needs exists only on
+# NSPanel, which Tauri does not create. These are already in the tree
+# through wry, so using them directly costs no extra dependencies.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSPanel", "NSResponder", "NSWindow"] }

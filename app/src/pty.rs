@@ -16,8 +16,10 @@ use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
 use overterm_core::detect::replay::{Dir, Event, append_event, resize_payload};
 use overterm_core::{AgentState, Detector, PtySession, SpawnConfig, StateChange};
 use serde::Serialize;
-use tauri::State;
 use tauri::ipc::Channel;
+use tauri::{AppHandle, State};
+
+use crate::choreograph::Choreographer;
 
 /// Dev-only session recorder, enabled with OVERTERM_CAPTURE=<path-prefix>.
 /// Every PTY byte, keystroke and resize is appended as a fixture event, so
@@ -98,12 +100,20 @@ pub struct SessionHandle {
 #[derive(Default)]
 pub struct Sessions(Mutex<HashMap<String, SessionHandle>>);
 
-fn emit_changes(events: &Channel<PtyEvent>, changes: Vec<StateChange>) {
+/// Report a batch of transitions: the overlay reacts to them, and the
+/// frontend shows what the detector concluded.
+fn emit_changes(
+    app: &AppHandle,
+    choreo: &Choreographer,
+    events: &Channel<PtyEvent>,
+    changes: Vec<StateChange>,
+) {
     for change in changes {
         let _ = events.send(PtyEvent::AgentStateChanged {
             state: change.to,
             cause: format!("{:?}", change.cause),
         });
+        choreo.on_state_change(app, &change);
     }
 }
 
@@ -112,7 +122,9 @@ pub fn spawn_session(
     cols: u16,
     rows: u16,
     on_event: Channel<PtyEvent>,
+    app: AppHandle,
     sessions: State<'_, Sessions>,
+    choreo: State<'_, Choreographer>,
 ) -> Result<String, String> {
     let config = SpawnConfig {
         // Login shell so GUI-launched instances still get the user's PATH
@@ -145,6 +157,16 @@ pub fn spawn_session(
     let alive = Arc::new(AtomicBool::new(true));
     let capture = Capture::open(&id);
 
+    // Let the choreography ask this session whether it is really working
+    // before it hides the terminal.
+    {
+        let detector = detector.clone();
+        choreo.set_work_check(
+            &app,
+            Arc::new(move || detector.lock().unwrap().is_working(Instant::now())),
+        );
+    }
+
     sessions.0.lock().unwrap().insert(
         id.clone(),
         SessionHandle {
@@ -162,6 +184,8 @@ pub fn spawn_session(
         let alive = alive.clone();
         let events = on_event.clone();
         let capture = capture.clone();
+        let app = app.clone();
+        let choreo = choreo.inner().clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
@@ -181,7 +205,7 @@ pub fn spawn_session(
                         {
                             break; // webview went away
                         }
-                        emit_changes(&events, changes);
+                        emit_changes(&app, &choreo, &events, changes);
                     }
                 }
             }
@@ -194,11 +218,12 @@ pub fn spawn_session(
     // Ticker: lets quiescence conclusions fire while the PTY is silent.
     {
         let alive = alive.clone();
+        let choreo = choreo.inner().clone();
         std::thread::spawn(move || {
             while alive.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_millis(100));
                 let changes = detector.lock().unwrap().tick(Instant::now());
-                emit_changes(&on_event, changes);
+                emit_changes(&app, &choreo, &on_event, changes);
             }
         });
     }
@@ -210,7 +235,9 @@ pub fn spawn_session(
 pub fn write_pty(
     session_id: String,
     data: String,
+    app: AppHandle,
     sessions: State<'_, Sessions>,
+    choreo: State<'_, Choreographer>,
 ) -> Result<(), String> {
     let mut sessions = sessions.0.lock().unwrap();
     let handle = sessions
@@ -222,11 +249,17 @@ pub fn write_pty(
         .lock()
         .unwrap()
         .feed_input(data.as_bytes(), Instant::now());
-    emit_changes(&handle.events, changes);
-    handle
+    emit_changes(&app, &choreo, &handle.events, changes);
+    let written = handle
         .session
         .write(data.as_bytes())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    // Scheduled after the transitions above so it is the collapse that
+    // survives, not one they cancelled.
+    if data.contains('\r') || data.contains('\n') {
+        choreo.on_submit(&app);
+    }
+    written
 }
 
 #[tauri::command]

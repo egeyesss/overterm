@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
-use overterm_core::detect::replay::{read_fixture, replay};
+use overterm_core::detect::replay::{read_fixture, replay, replay_with};
 use overterm_core::detect::{AgentState, Detector, Signal, StateChange};
 
 fn run(name: &str) -> Vec<(u64, StateChange)> {
@@ -18,6 +18,23 @@ fn run(name: &str) -> Vec<(u64, StateChange)> {
         HeuristicConfig::default(),
     ))]);
     replay(&mut detector, &events, 100, 1000)
+}
+
+/// Replay a fixture and record, on every tick, whether the detector could
+/// show the session was working.
+fn working_over_time(name: &str) -> Vec<(u64, bool)> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(name);
+    let events = read_fixture(&path).expect("fixture should parse");
+    let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(
+        HeuristicConfig::default(),
+    ))]);
+    let mut samples = Vec::new();
+    replay_with(&mut detector, &events, 100, 1000, |t, now, detector| {
+        samples.push((t, detector.is_working(now)));
+    });
+    samples
 }
 
 fn states(changes: &[(u64, StateChange)]) -> Vec<AgentState> {
@@ -165,5 +182,54 @@ fn claude_idle_repaints_do_not_disturb_done() {
     assert!(
         between.is_empty(),
         "unexpected transitions while idle: {between:#?}"
+    );
+}
+
+#[test]
+fn claude_waiting_on_the_trust_dialog_does_not_read_as_working() {
+    // Same recording as above: claude launches, paints the "do you trust
+    // this folder" dialog, and sits there until the answer at 4000ms. The
+    // state is Busy that whole time, because nothing has told the detector
+    // otherwise, so Busy on its own must not be treated as permission to
+    // hide the terminal. Collapsing here would hide the question.
+    let samples = working_over_time("claude-simple-question.ndjson");
+    let waiting: Vec<_> = samples
+        .iter()
+        .filter(|(t, _)| (2500..3900).contains(t))
+        .collect();
+    assert!(!waiting.is_empty(), "no samples in the dialog window");
+    assert!(
+        waiting.iter().all(|(_, working)| !working),
+        "detector claimed the trust dialog was working: {waiting:?}"
+    );
+}
+
+#[test]
+fn claude_streaming_an_answer_reads_as_working() {
+    // The other side of the same rule: while an answer streams, the
+    // session must read as working or the window would never collapse.
+    // The question goes in at 7000ms and the answer runs to about
+    // 11300ms. The window collapses 1500ms after a submit and confirms
+    // 500ms later, so those two moments are what decide whether the bar
+    // ever appears for real work.
+    let samples = working_over_time("claude-simple-question.ndjson");
+    for at in [8500, 9000] {
+        let working = samples.iter().find(|(t, _)| *t == at).map(|(_, w)| *w);
+        assert_eq!(working, Some(true), "not working at the {at}ms check");
+    }
+
+    // Typing the question is the user's own echo, so the first second
+    // after they stop deliberately does not count as the agent working.
+    let streaming: Vec<_> = samples
+        .iter()
+        .filter(|(t, _)| (8100..11000).contains(t))
+        .collect();
+    assert!(
+        !streaming.is_empty(),
+        "no samples while the answer streamed"
+    );
+    assert!(
+        streaming.iter().all(|(_, working)| *working),
+        "detector missed work in progress: {streaming:?}"
     );
 }

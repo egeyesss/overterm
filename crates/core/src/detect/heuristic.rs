@@ -260,6 +260,19 @@ impl Adapter for HeuristicAdapter {
     fn resize(&mut self, cols: u16, rows: u16) {
         self.parser.screen_mut().set_size(rows, cols);
     }
+
+    fn is_working(&self, now: Instant) -> bool {
+        // A working indicator on screen is the strongest evidence there
+        // is, and it is the whole reason `busy_pattern` exists.
+        if self.busy_hint_on_screen() {
+            return true;
+        }
+        // Otherwise the screen has to still be changing. A dialog waiting
+        // for an answer paints once and then goes still, while work that
+        // produces output keeps repainting.
+        self.last_output
+            .is_some_and(|t| now.duration_since(t) < self.cfg.quiet)
+    }
 }
 
 #[cfg(test)]
@@ -273,6 +286,36 @@ mod tests {
 
     fn adapter() -> HeuristicAdapter {
         HeuristicAdapter::new(HeuristicConfig::default())
+    }
+
+    #[test]
+    fn a_still_screen_is_not_working() {
+        // A program that printed a question and is waiting for an answer.
+        // The state machine still says Busy, but there is no evidence of
+        // work, so the window must not hide the question.
+        let base = Instant::now();
+        let mut a = adapter();
+        a.feed(
+            b"Do you trust the files in this folder?\r\n  1. Yes\r\n",
+            at(base, 0),
+        );
+        assert!(a.is_working(at(base, 100)));
+        assert!(!a.is_working(at(base, 600)));
+        assert!(!a.is_working(at(base, 30_000)));
+    }
+
+    #[test]
+    fn a_working_hint_counts_even_while_output_pauses() {
+        // Claude streams in batches with pauses between them, and keeps
+        // its interrupt hint in the status area at the bottom of the
+        // screen the whole time it works.
+        let base = Instant::now();
+        let mut a = adapter();
+        let mut screen = "thinking...".to_string();
+        screen.push_str(&"\r\n".repeat(28));
+        screen.push_str("(esc to interrupt)");
+        a.feed(screen.as_bytes(), at(base, 0));
+        assert!(a.is_working(at(base, 5_000)));
     }
 
     #[test]

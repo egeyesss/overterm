@@ -103,6 +103,23 @@ pub fn replay(
     tick_ms: u64,
     trailing_ms: u64,
 ) -> Vec<(u64, StateChange)> {
+    replay_with(detector, events, tick_ms, trailing_ms, |_, _, _| {})
+}
+
+/// Replay, calling `probe` with the elapsed time, the matching clock
+/// reading and the detector on every tick. Lets a test watch something
+/// other than the transitions, such as whether the session reads as
+/// working partway through.
+pub fn replay_with<F>(
+    detector: &mut Detector,
+    events: &[Event],
+    tick_ms: u64,
+    trailing_ms: u64,
+    mut probe: F,
+) -> Vec<(u64, StateChange)>
+where
+    F: FnMut(u64, Instant, &Detector),
+{
     let base = Instant::now();
     let clock = |ms: u64| base + Duration::from_millis(ms);
     let mut changes: Vec<(u64, StateChange)> = Vec::new();
@@ -113,6 +130,7 @@ pub fn replay(
             ticked_to += tick_ms;
             let t = ticked_to;
             changes.extend(detector.tick(clock(t)).into_iter().map(|c| (t, c)));
+            probe(t, clock(t), detector);
         }
         let now = clock(ev.t_ms);
         let produced = match ev.dir {
@@ -133,6 +151,7 @@ pub fn replay(
         ticked_to += tick_ms;
         let t = ticked_to;
         changes.extend(detector.tick(clock(t)).into_iter().map(|c| (t, c)));
+        probe(t, clock(t), detector);
     }
     changes
 }
