@@ -16,3 +16,46 @@ body {
 #terminal .xterm {
   height: 100%;
 }
+
+/* Debug overlay showing the detected agent state. */
+#status {
+  position: fixed;
+  top: 8px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(26, 27, 38, 0.85);
+  border: 1px solid #2f3349;
+  font-family: Menlo, Monaco, monospace;
+  font-size: 11px;
+  color: #c0caf5;
+  pointer-events: none;
+  user-select: none;
+  z-index: 10;
+}
+
+#status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #565f89;
+}
+
+#status.busy #status-dot {
+  background: #e0af68;
+}
+
+#status.done #status-dot {
+  background: #9ece6a;
+}
+
+#status.needsInput #status-dot {
+  background: #f7768e;
+}
+
+#status-meta {
+  color: #565f89;
+}

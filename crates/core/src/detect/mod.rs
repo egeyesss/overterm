@@ -1,0 +1,307 @@
+//! Agent-state detection.
+//!
+//! A `Detector` owns one session's state machine and a ranked set of
+//! adapters. Adapters watch the output stream and emit `Signal`s; the
+//! state machine turns signals into state transitions. Precise adapters
+//! (hooks, OSC sequences) outrank the heuristic adapter: once a precise
+//! signal has been seen for a session, heuristic signals are ignored so
+//! the quiescence timer cannot fight exact events.
+
+pub mod ansi;
+pub mod heuristic;
+pub mod replay;
+
+use std::time::Instant;
+
+/// What the agent inside the terminal appears to be doing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentState {
+    /// Nothing requested yet, or the last activity was not user-initiated.
+    Idle,
+    /// Working: output is flowing after the user submitted something.
+    Busy,
+    /// The agent appears to be waiting on the user.
+    NeedsInput,
+    /// The agent finished work the user asked for.
+    Done,
+}
+
+/// A single observation about the session.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Signal {
+    /// Claude Code Stop hook fired (wired up in a later milestone).
+    HookStop,
+    /// Claude Code Notification hook fired (wired up in a later milestone).
+    HookNotification,
+    /// OSC 133;D command-finished sequence from shell integration.
+    OscCommandEnd { exit: Option<i32> },
+    /// OSC 133;A prompt-start sequence from shell integration.
+    OscPromptStart,
+    /// Bell character in output, outside any escape sequence.
+    Bell,
+    /// Output went quiet after a burst and the tail looks like a prompt.
+    Quiescence { quiet_ms: u64 },
+    /// Output started flowing heavily.
+    OutputBurst,
+    /// The user submitted input (pressed enter).
+    UserInput,
+}
+
+/// How much trust a signal carries.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum SignalClass {
+    /// Timing and pattern guesses. Ignored once a precise source exists.
+    Heuristic,
+    /// Exact events from hooks or shell integration.
+    Precise,
+    /// The user's own actions. Always trusted.
+    Direct,
+}
+
+impl Signal {
+    pub fn class(&self) -> SignalClass {
+        match self {
+            Signal::HookStop
+            | Signal::HookNotification
+            | Signal::OscCommandEnd { .. }
+            | Signal::OscPromptStart => SignalClass::Precise,
+            Signal::Bell | Signal::Quiescence { .. } | Signal::OutputBurst => {
+                SignalClass::Heuristic
+            }
+            Signal::UserInput => SignalClass::Direct,
+        }
+    }
+}
+
+/// A source of signals watching one session's byte streams.
+pub trait Adapter: Send {
+    /// Consume a chunk of terminal output.
+    fn feed(&mut self, bytes: &[u8], now: Instant) -> Vec<Signal>;
+    /// Called periodically so time-based signals (quiescence) can fire
+    /// without waiting for the next output chunk.
+    fn tick(&mut self, now: Instant) -> Vec<Signal>;
+    /// The terminal was resized. Adapters that model the screen need this.
+    fn resize(&mut self, _cols: u16, _rows: u16) {}
+}
+
+/// One applied transition, with the signal that caused it.
+#[derive(Clone, Debug)]
+pub struct StateChange {
+    pub from: AgentState,
+    pub to: AgentState,
+    pub cause: Signal,
+}
+
+pub struct Detector {
+    state: AgentState,
+    adapters: Vec<Box<dyn Adapter>>,
+    /// Set once any precise signal arrives; heuristics are ignored after.
+    precise_seen: bool,
+    /// Whether the user has submitted input since the last Done or Idle.
+    /// Quiescence only counts as Done for work the user asked for, so a
+    /// fresh shell printing its banner settles into Idle rather than
+    /// announcing a finished task at launch.
+    awaiting_result: bool,
+}
+
+impl Detector {
+    pub fn new(adapters: Vec<Box<dyn Adapter>>) -> Self {
+        Self {
+            state: AgentState::Idle,
+            adapters,
+            precise_seen: false,
+            awaiting_result: false,
+        }
+    }
+
+    pub fn state(&self) -> AgentState {
+        self.state
+    }
+
+    /// Feed a chunk of terminal output through every adapter.
+    pub fn feed_output(&mut self, bytes: &[u8], now: Instant) -> Vec<StateChange> {
+        let mut changes = Vec::new();
+        let signals: Vec<Signal> = self
+            .adapters
+            .iter_mut()
+            .flat_map(|a| a.feed(bytes, now))
+            .collect();
+        for signal in signals {
+            changes.extend(self.apply(signal));
+        }
+        changes
+    }
+
+    /// Feed user keystrokes. Enter means the user submitted something.
+    pub fn feed_input(&mut self, bytes: &[u8], _now: Instant) -> Vec<StateChange> {
+        if bytes.contains(&b'\r') || bytes.contains(&b'\n') {
+            self.apply(Signal::UserInput).into_iter().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Forward a terminal resize to the adapters.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        for adapter in &mut self.adapters {
+            adapter.resize(cols, rows);
+        }
+    }
+
+    /// Run periodic time-based checks. Call every ~100ms.
+    pub fn tick(&mut self, now: Instant) -> Vec<StateChange> {
+        let mut changes = Vec::new();
+        let signals: Vec<Signal> = self.adapters.iter_mut().flat_map(|a| a.tick(now)).collect();
+        for signal in signals {
+            changes.extend(self.apply(signal));
+        }
+        changes
+    }
+
+    /// Push one signal through the suppression rule and the state machine.
+    pub fn apply(&mut self, signal: Signal) -> Option<StateChange> {
+        match signal.class() {
+            SignalClass::Precise => self.precise_seen = true,
+            SignalClass::Heuristic if self.precise_seen => return None,
+            _ => {}
+        }
+
+        let next = self.transition(&signal)?;
+        let change = StateChange {
+            from: self.state,
+            to: next,
+            cause: signal,
+        };
+        self.state = next;
+        Some(change)
+    }
+
+    fn transition(&mut self, signal: &Signal) -> Option<AgentState> {
+        use AgentState::*;
+        use Signal::*;
+        match (self.state, signal) {
+            (Busy, UserInput) => {
+                self.awaiting_result = true;
+                None
+            }
+            (_, UserInput) => {
+                self.awaiting_result = true;
+                Some(Busy)
+            }
+            (Idle | Done | NeedsInput, OutputBurst) => Some(Busy),
+            (Busy | NeedsInput, Quiescence { .. }) => {
+                if self.awaiting_result {
+                    self.awaiting_result = false;
+                    Some(Done)
+                } else {
+                    Some(Idle)
+                }
+            }
+            (Busy | NeedsInput, HookStop | OscCommandEnd { .. }) => {
+                self.awaiting_result = false;
+                Some(Done)
+            }
+            (Busy, Bell | HookNotification) => Some(NeedsInput),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn detector() -> Detector {
+        Detector::new(Vec::new())
+    }
+
+    fn quiet() -> Signal {
+        Signal::Quiescence { quiet_ms: 400 }
+    }
+
+    #[test]
+    fn submit_then_quiet_is_done() {
+        let mut d = detector();
+        assert_eq!(d.state(), AgentState::Idle);
+        let c = d.apply(Signal::UserInput).unwrap();
+        assert_eq!(c.to, AgentState::Busy);
+        let c = d.apply(quiet()).unwrap();
+        assert_eq!(c.to, AgentState::Done);
+    }
+
+    #[test]
+    fn startup_burst_settles_to_idle_without_user_input() {
+        let mut d = detector();
+        assert_eq!(d.apply(Signal::OutputBurst).unwrap().to, AgentState::Busy);
+        assert_eq!(d.apply(quiet()).unwrap().to, AgentState::Idle);
+    }
+
+    #[test]
+    fn bell_while_busy_means_needs_input() {
+        let mut d = detector();
+        d.apply(Signal::UserInput);
+        assert_eq!(d.apply(Signal::Bell).unwrap().to, AgentState::NeedsInput);
+        assert_eq!(d.apply(Signal::UserInput).unwrap().to, AgentState::Busy);
+    }
+
+    #[test]
+    fn quiescence_resolves_needs_input() {
+        // A bell mid-run flags attention; if the prompt then returns with
+        // no user action, the work still finished.
+        let mut d = detector();
+        d.apply(Signal::UserInput);
+        d.apply(Signal::Bell);
+        assert_eq!(d.state(), AgentState::NeedsInput);
+        assert_eq!(d.apply(quiet()).unwrap().to, AgentState::Done);
+    }
+
+    #[test]
+    fn bell_while_idle_is_ignored() {
+        let mut d = detector();
+        assert!(d.apply(Signal::Bell).is_none());
+        assert_eq!(d.state(), AgentState::Idle);
+    }
+
+    #[test]
+    fn typing_without_enter_is_not_a_submit() {
+        let mut d = detector();
+        let now = Instant::now();
+        assert!(d.feed_input(b"claud", now).is_empty());
+        assert_eq!(d.state(), AgentState::Idle);
+        assert_eq!(d.feed_input(b"e\r", now).len(), 1);
+        assert_eq!(d.state(), AgentState::Busy);
+    }
+
+    #[test]
+    fn precise_signal_suppresses_later_heuristics() {
+        let mut d = detector();
+        d.apply(Signal::UserInput);
+        assert_eq!(d.apply(Signal::HookStop).unwrap().to, AgentState::Done);
+        // A quiescence guess arriving later must do nothing.
+        d.apply(Signal::OutputBurst);
+        assert_eq!(d.state(), AgentState::Done);
+        assert!(d.apply(quiet()).is_none());
+    }
+
+    #[test]
+    fn hook_stop_resolves_needs_input() {
+        let mut d = detector();
+        d.apply(Signal::UserInput);
+        d.apply(Signal::HookNotification);
+        assert_eq!(d.state(), AgentState::NeedsInput);
+        assert_eq!(d.apply(Signal::HookStop).unwrap().to, AgentState::Done);
+    }
+
+    #[test]
+    fn repeat_work_cycles_busy_done() {
+        let mut d = detector();
+        d.apply(Signal::UserInput);
+        d.apply(quiet());
+        assert_eq!(d.state(), AgentState::Done);
+        d.apply(Signal::UserInput);
+        assert_eq!(d.state(), AgentState::Busy);
+        d.apply(quiet());
+        assert_eq!(d.state(), AgentState::Done);
+    }
+}

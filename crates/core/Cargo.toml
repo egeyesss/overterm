@@ -9,5 +9,9 @@ repository.workspace = true
 [dependencies]
 anyhow = "1"
 portable-pty = "0.9"
+regex = "1"
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+vt100 = "0.16.2"
