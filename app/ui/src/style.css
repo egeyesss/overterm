@@ -1,0 +1,18 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #1a1b26;
+  overflow: hidden;
+}
+
+#terminal {
+  height: 100%;
+  padding: 4px 0 4px 6px;
+  box-sizing: border-box;
+}
+
+/* Fill the padded container so FitAddon measures the right area. */
+#terminal .xterm {
+  height: 100%;
+}
