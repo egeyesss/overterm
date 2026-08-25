@@ -20,6 +20,8 @@ use super::{Detector, StateChange};
 pub enum Dir {
     Output,
     Input,
+    /// Terminal resize; payload is ASCII "<cols>x<rows>".
+    Resize,
 }
 
 #[derive(Clone, Debug)]
@@ -43,19 +45,25 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
+/// Write one event as an NDJSON line. Used by the fixture writer and by
+/// live session capture.
+pub fn append_event(out: &mut impl std::io::Write, ev: &Event) -> std::io::Result<()> {
+    let d = match ev.dir {
+        Dir::Output => "o",
+        Dir::Input => "i",
+        Dir::Resize => "r",
+    };
+    writeln!(
+        out,
+        "{}",
+        serde_json::json!({ "t": ev.t_ms, "d": d, "x": hex_encode(&ev.bytes) })
+    )
+}
+
 pub fn write_fixture(path: &Path, events: &[Event]) -> std::io::Result<()> {
-    use std::io::Write;
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     for ev in events {
-        let d = match ev.dir {
-            Dir::Output => "o",
-            Dir::Input => "i",
-        };
-        writeln!(
-            out,
-            "{}",
-            serde_json::json!({ "t": ev.t_ms, "d": d, "x": hex_encode(&ev.bytes) })
-        )?;
+        append_event(&mut out, ev)?;
     }
     Ok(())
 }
@@ -72,6 +80,7 @@ pub fn read_fixture(path: &Path) -> Result<Vec<Event>, String> {
         let dir = match v["d"].as_str() {
             Some("o") => Dir::Output,
             Some("i") => Dir::Input,
+            Some("r") => Dir::Resize,
             other => return Err(format!("line {}: bad direction {other:?}", i + 1)),
         };
         events.push(Event {
@@ -109,6 +118,12 @@ pub fn replay(
         let produced = match ev.dir {
             Dir::Output => detector.feed_output(&ev.bytes, now),
             Dir::Input => detector.feed_input(&ev.bytes, now),
+            Dir::Resize => {
+                if let Some((cols, rows)) = parse_resize(&ev.bytes) {
+                    detector.resize(cols, rows);
+                }
+                Vec::new()
+            }
         };
         changes.extend(produced.into_iter().map(|c| (ev.t_ms, c)));
     }
@@ -122,9 +137,26 @@ pub fn replay(
     changes
 }
 
+/// Decode a resize payload ("<cols>x<rows>").
+pub fn parse_resize(bytes: &[u8]) -> Option<(u16, u16)> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let (cols, rows) = text.split_once('x')?;
+    Some((cols.parse().ok()?, rows.parse().ok()?))
+}
+
+/// Encode a resize payload.
+pub fn resize_payload(cols: u16, rows: u16) -> Vec<u8> {
+    format!("{cols}x{rows}").into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resize_payload_round_trips() {
+        assert_eq!(parse_resize(&resize_payload(120, 38)), Some((120, 38)));
+    }
 
     #[test]
     fn hex_round_trips() {

@@ -194,6 +194,14 @@ impl Adapter for HeuristicAdapter {
             return Vec::new();
         }
         if self.busy_hint_on_screen() {
+            if self.debug
+                && self
+                    .last_debug
+                    .is_none_or(|t| now.duration_since(t) > Duration::from_secs(3))
+            {
+                self.last_debug = Some(now);
+                eprintln!("[detect] quiet but busy hint on screen, holding");
+            }
             return Vec::new();
         }
         if self.prompt_at_cursor() {

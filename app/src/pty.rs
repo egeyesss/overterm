@@ -13,10 +13,55 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
+use overterm_core::detect::replay::{Dir, Event, append_event, resize_payload};
 use overterm_core::{AgentState, Detector, PtySession, SpawnConfig, StateChange};
 use serde::Serialize;
 use tauri::State;
 use tauri::ipc::Channel;
+
+/// Dev-only session recorder, enabled with OVERTERM_CAPTURE=<path-prefix>.
+/// Every PTY byte, keystroke and resize is appended as a fixture event, so
+/// a misbehaving live session can be replayed through the detector as is.
+pub struct Capture {
+    file: std::io::BufWriter<std::fs::File>,
+    start: Instant,
+}
+
+impl Capture {
+    fn open(session_id: &str) -> Option<Arc<Mutex<Capture>>> {
+        let prefix = std::env::var("OVERTERM_CAPTURE").ok()?;
+        let path = format!("{prefix}-{session_id}.ndjson");
+        match std::fs::File::create(&path) {
+            Ok(file) => {
+                eprintln!("[capture] recording session to {path}");
+                Some(Arc::new(Mutex::new(Capture {
+                    file: std::io::BufWriter::new(file),
+                    start: Instant::now(),
+                })))
+            }
+            Err(e) => {
+                eprintln!("[capture] cannot create {path}: {e}");
+                None
+            }
+        }
+    }
+
+    fn log(&mut self, dir: Dir, bytes: &[u8]) {
+        let ev = Event {
+            t_ms: self.start.elapsed().as_millis() as u64,
+            dir,
+            bytes: bytes.to_vec(),
+        };
+        let _ = append_event(&mut self.file, &ev);
+        let _ = std::io::Write::flush(&mut self.file);
+    }
+}
+
+fn capture_log(capture: &Option<Arc<Mutex<Capture>>>, dir: Dir, bytes: &[u8]) {
+    if let Some(capture) = capture {
+        capture.lock().unwrap().log(dir, bytes);
+    }
+}
 
 /// Events streamed to the frontend for one session.
 #[derive(Clone, Serialize)]
@@ -47,6 +92,7 @@ pub struct SessionHandle {
     detector: Arc<Mutex<Detector>>,
     events: Channel<PtyEvent>,
     alive: Arc<AtomicBool>,
+    capture: Option<Arc<Mutex<Capture>>>,
 }
 
 #[derive(Default)]
@@ -97,6 +143,7 @@ pub fn spawn_session(
     });
     let detector = Arc::new(Mutex::new(Detector::new(vec![Box::new(heuristic)])));
     let alive = Arc::new(AtomicBool::new(true));
+    let capture = Capture::open(&id);
 
     sessions.0.lock().unwrap().insert(
         id.clone(),
@@ -105,6 +152,7 @@ pub fn spawn_session(
             detector: detector.clone(),
             events: on_event.clone(),
             alive: alive.clone(),
+            capture: capture.clone(),
         },
     );
 
@@ -113,12 +161,14 @@ pub fn spawn_session(
         let detector = detector.clone();
         let alive = alive.clone();
         let events = on_event.clone();
+        let capture = capture.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
                 match output.reader.read(&mut buf) {
                     Ok(0) | Err(_) => break, // EOF or master closed
                     Ok(n) => {
+                        capture_log(&capture, Dir::Output, &buf[..n]);
                         let changes = detector
                             .lock()
                             .unwrap()
@@ -166,6 +216,7 @@ pub fn write_pty(
     let handle = sessions
         .get_mut(&session_id)
         .ok_or_else(|| format!("no session {session_id}"))?;
+    capture_log(&handle.capture, Dir::Input, data.as_bytes());
     let changes = handle
         .detector
         .lock()
@@ -189,6 +240,7 @@ pub fn resize_pty(
     let handle = sessions
         .get(&session_id)
         .ok_or_else(|| format!("no session {session_id}"))?;
+    capture_log(&handle.capture, Dir::Resize, &resize_payload(cols, rows));
     handle.detector.lock().unwrap().resize(cols, rows);
     handle.session.resize(cols, rows).map_err(|e| e.to_string())
 }
