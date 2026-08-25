@@ -36,6 +36,8 @@ pub struct SpawnConfig {
     pub cwd: Option<PathBuf>,
     /// Extra environment variables on top of the inherited environment.
     pub env: HashMap<String, String>,
+    /// Inherited environment variables to remove before spawning.
+    pub env_remove: Vec<String>,
     pub cols: u16,
     pub rows: u16,
 }
@@ -47,6 +49,7 @@ impl Default for SpawnConfig {
             args: Vec::new(),
             cwd: None,
             env: HashMap::new(),
+            env_remove: Vec::new(),
             cols: 80,
             rows: 24,
         }
@@ -107,6 +110,9 @@ impl PtySession {
         cmd.env(SESSION_ENV_VAR, &id);
         for (key, value) in config.env {
             cmd.env(key, value);
+        }
+        for key in &config.env_remove {
+            cmd.env_remove(key);
         }
 
         let child = pair.slave.spawn_command(cmd).map_err(SessionError::Spawn)?;
