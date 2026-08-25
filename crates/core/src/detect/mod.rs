@@ -17,6 +17,16 @@ use std::time::{Duration, Instant};
 /// enough that it expires while a submitted job runs.
 const TYPING_GRACE: Duration = Duration::from_millis(1000);
 
+/// How long a precise source is trusted after its last signal.
+///
+/// Suppression is meant to last while a hooked program is running, and
+/// whoever installed the hooks says when that ends. This is only a way
+/// back from an end that never arrives: the program was killed, or its
+/// hooks were removed part way through. Without it, one precise signal
+/// would leave the fallback detector switched off for the rest of the
+/// shell's life, and a session is a shell, not one run of one program.
+const PRECISE_TRUST: Duration = Duration::from_secs(600);
+
 /// What the agent inside the terminal appears to be doing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -127,8 +137,10 @@ pub struct StateChange {
 pub struct Detector {
     state: AgentState,
     adapters: Vec<Box<dyn Adapter>>,
-    /// Set once any precise signal arrives; heuristics are ignored after.
-    precise_seen: bool,
+    /// When a precise signal last arrived. While a precise source is
+    /// attached, heuristic conclusions are ignored so the quiescence
+    /// timer cannot fight exact events.
+    precise_since: Option<Instant>,
     /// When the user last typed something. The window must not collapse
     /// out from under someone in the middle of writing a message.
     last_typing: Option<Instant>,
@@ -144,7 +156,7 @@ impl Detector {
         Self {
             state: AgentState::Idle,
             adapters,
-            precise_seen: false,
+            precise_since: None,
             last_typing: None,
             awaiting_result: false,
         }
@@ -163,7 +175,7 @@ impl Detector {
             .flat_map(|a| a.feed(bytes, now))
             .collect();
         for signal in signals {
-            changes.extend(self.apply(signal));
+            changes.extend(self.apply(signal, now));
         }
         changes
     }
@@ -174,7 +186,7 @@ impl Detector {
             self.last_typing = Some(now);
         }
         if bytes.contains(&b'\r') || bytes.contains(&b'\n') {
-            self.apply(Signal::UserInput).into_iter().collect()
+            self.apply(Signal::UserInput, now).into_iter().collect()
         } else {
             Vec::new()
         }
@@ -185,6 +197,20 @@ impl Detector {
         for adapter in &mut self.adapters {
             adapter.resize(cols, rows);
         }
+    }
+
+    /// Whether a precise source is currently answering for this session.
+    pub fn precise_source_active(&self, now: Instant) -> bool {
+        self.precise_since
+            .is_some_and(|t| now.duration_since(t) < PRECISE_TRUST)
+    }
+
+    /// Let go of the precise source, so the fallback detector takes over
+    /// again. Called when the program that was reporting exits: the
+    /// session outlives it, and whatever is run next still needs
+    /// detecting.
+    pub fn detach_precise_source(&mut self) {
+        self.precise_since = None;
     }
 
     /// Whether any adapter can show the session is working. Used to decide
@@ -207,16 +233,16 @@ impl Detector {
         let mut changes = Vec::new();
         let signals: Vec<Signal> = self.adapters.iter_mut().flat_map(|a| a.tick(now)).collect();
         for signal in signals {
-            changes.extend(self.apply(signal));
+            changes.extend(self.apply(signal, now));
         }
         changes
     }
 
     /// Push one signal through the suppression rule and the state machine.
-    pub fn apply(&mut self, signal: Signal) -> Option<StateChange> {
+    pub fn apply(&mut self, signal: Signal, now: Instant) -> Option<StateChange> {
         match signal.class() {
-            SignalClass::Precise => self.precise_seen = true,
-            SignalClass::Heuristic if self.precise_seen => return None,
+            SignalClass::Precise => self.precise_since = Some(now),
+            SignalClass::Heuristic if self.precise_source_active(now) => return None,
             _ => {}
         }
 
@@ -269,6 +295,17 @@ mod tests {
         Detector::new(Vec::new())
     }
 
+    /// Most of these tests do not care when a signal arrives.
+    trait ApplyNow {
+        fn apply_now(&mut self, signal: Signal) -> Option<StateChange>;
+    }
+
+    impl ApplyNow for Detector {
+        fn apply_now(&mut self, signal: Signal) -> Option<StateChange> {
+            self.apply(signal, Instant::now())
+        }
+    }
+
     fn quiet() -> Signal {
         Signal::Quiescence { quiet_ms: 400 }
     }
@@ -277,25 +314,31 @@ mod tests {
     fn submit_then_quiet_is_done() {
         let mut d = detector();
         assert_eq!(d.state(), AgentState::Idle);
-        let c = d.apply(Signal::UserInput).unwrap();
+        let c = d.apply_now(Signal::UserInput).unwrap();
         assert_eq!(c.to, AgentState::Busy);
-        let c = d.apply(quiet()).unwrap();
+        let c = d.apply_now(quiet()).unwrap();
         assert_eq!(c.to, AgentState::Done);
     }
 
     #[test]
     fn startup_burst_settles_to_idle_without_user_input() {
         let mut d = detector();
-        assert_eq!(d.apply(Signal::OutputBurst).unwrap().to, AgentState::Busy);
-        assert_eq!(d.apply(quiet()).unwrap().to, AgentState::Idle);
+        assert_eq!(
+            d.apply_now(Signal::OutputBurst).unwrap().to,
+            AgentState::Busy
+        );
+        assert_eq!(d.apply_now(quiet()).unwrap().to, AgentState::Idle);
     }
 
     #[test]
     fn bell_while_busy_means_needs_input() {
         let mut d = detector();
-        d.apply(Signal::UserInput);
-        assert_eq!(d.apply(Signal::Bell).unwrap().to, AgentState::NeedsInput);
-        assert_eq!(d.apply(Signal::UserInput).unwrap().to, AgentState::Busy);
+        d.apply_now(Signal::UserInput);
+        assert_eq!(
+            d.apply_now(Signal::Bell).unwrap().to,
+            AgentState::NeedsInput
+        );
+        assert_eq!(d.apply_now(Signal::UserInput).unwrap().to, AgentState::Busy);
     }
 
     #[test]
@@ -303,16 +346,16 @@ mod tests {
         // A bell mid-run flags attention; if the prompt then returns with
         // no user action, the work still finished.
         let mut d = detector();
-        d.apply(Signal::UserInput);
-        d.apply(Signal::Bell);
+        d.apply_now(Signal::UserInput);
+        d.apply_now(Signal::Bell);
         assert_eq!(d.state(), AgentState::NeedsInput);
-        assert_eq!(d.apply(quiet()).unwrap().to, AgentState::Done);
+        assert_eq!(d.apply_now(quiet()).unwrap().to, AgentState::Done);
     }
 
     #[test]
     fn bell_while_idle_is_ignored() {
         let mut d = detector();
-        assert!(d.apply(Signal::Bell).is_none());
+        assert!(d.apply_now(Signal::Bell).is_none());
         assert_eq!(d.state(), AgentState::Idle);
     }
 
@@ -367,32 +410,102 @@ mod tests {
     #[test]
     fn precise_signal_suppresses_later_heuristics() {
         let mut d = detector();
-        d.apply(Signal::UserInput);
-        assert_eq!(d.apply(Signal::HookStop).unwrap().to, AgentState::Done);
+        d.apply_now(Signal::UserInput);
+        assert_eq!(d.apply_now(Signal::HookStop).unwrap().to, AgentState::Done);
         // A quiescence guess arriving later must do nothing.
-        d.apply(Signal::OutputBurst);
+        d.apply_now(Signal::OutputBurst);
         assert_eq!(d.state(), AgentState::Done);
-        assert!(d.apply(quiet()).is_none());
+        assert!(d.apply_now(quiet()).is_none());
+    }
+
+    #[test]
+    fn a_precise_source_can_be_let_go_of() {
+        // A session is a shell, not one run of one program. Run a program
+        // that reports precisely, quit it, and run something ordinary
+        // afterwards: the fallback detector has to come back or nothing
+        // is ever detected again for the life of that shell.
+        let base = Instant::now();
+        let mut d = detector();
+        d.apply(Signal::UserInput, base);
+        assert_eq!(
+            d.apply(Signal::HookStop, base).unwrap().to,
+            AgentState::Done
+        );
+        assert!(d.apply(quiet(), base).is_none());
+
+        d.detach_precise_source();
+        assert!(!d.precise_source_active(base));
+        d.apply(Signal::UserInput, base);
+        assert_eq!(d.apply(quiet(), base).unwrap().to, AgentState::Done);
+    }
+
+    #[test]
+    fn a_precise_source_that_never_says_goodbye_times_out() {
+        // The program reporting can be killed, or have its hooks removed
+        // part way through, and then nothing ever says it is gone. Trust
+        // has to lapse on its own or the session is stuck.
+        let base = Instant::now();
+        let mut d = detector();
+        d.apply(Signal::HookStop, base);
+        assert!(d.precise_source_active(base + Duration::from_secs(60)));
+        assert!(!d.precise_source_active(base + PRECISE_TRUST));
+
+        d.apply(Signal::UserInput, base + PRECISE_TRUST);
+        assert_eq!(
+            d.apply(quiet(), base + PRECISE_TRUST).unwrap().to,
+            AgentState::Done
+        );
+    }
+
+    #[test]
+    fn a_precise_source_can_report_work_the_screen_cannot_show() {
+        // Settles how the two tiers meet: a precise source does not skip
+        // the "is it safe to hide the terminal" question, it answers it.
+        // A turn known to be in flight counts as working even when the
+        // screen has gone completely still, which is what the heuristic
+        // alone would read as waiting on the user.
+        struct TurnInFlight;
+        impl Adapter for TurnInFlight {
+            fn feed(&mut self, _: &[u8], _: Instant) -> Vec<Signal> {
+                Vec::new()
+            }
+            fn tick(&mut self, _: Instant) -> Vec<Signal> {
+                Vec::new()
+            }
+            fn is_working(&self, _: Instant) -> bool {
+                true
+            }
+        }
+
+        let base = Instant::now();
+        let mut d = Detector::new(vec![Box::new(TurnInFlight)]);
+        assert!(d.is_working(base));
+
+        // The user still outranks it. Someone typing owns the terminal
+        // whatever the agent is doing.
+        d.feed_input(b"hold on", base);
+        assert!(!d.is_working(base + Duration::from_millis(500)));
+        assert!(d.is_working(base + Duration::from_millis(1500)));
     }
 
     #[test]
     fn hook_stop_resolves_needs_input() {
         let mut d = detector();
-        d.apply(Signal::UserInput);
-        d.apply(Signal::HookNotification);
+        d.apply_now(Signal::UserInput);
+        d.apply_now(Signal::HookNotification);
         assert_eq!(d.state(), AgentState::NeedsInput);
-        assert_eq!(d.apply(Signal::HookStop).unwrap().to, AgentState::Done);
+        assert_eq!(d.apply_now(Signal::HookStop).unwrap().to, AgentState::Done);
     }
 
     #[test]
     fn repeat_work_cycles_busy_done() {
         let mut d = detector();
-        d.apply(Signal::UserInput);
-        d.apply(quiet());
+        d.apply_now(Signal::UserInput);
+        d.apply_now(quiet());
         assert_eq!(d.state(), AgentState::Done);
-        d.apply(Signal::UserInput);
+        d.apply_now(Signal::UserInput);
         assert_eq!(d.state(), AgentState::Busy);
-        d.apply(quiet());
+        d.apply_now(quiet());
         assert_eq!(d.state(), AgentState::Done);
     }
 }
