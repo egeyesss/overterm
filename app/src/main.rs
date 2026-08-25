@@ -1,11 +1,15 @@
 // Prevents an extra console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod choreograph;
 mod platform;
 mod pty;
 
+use overterm_core::ChoreoConfig;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+
+use choreograph::Choreographer;
 
 pub const MAIN_WINDOW: &str = "main";
 
@@ -15,6 +19,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(pty::Sessions::default())
+        .manage(Choreographer::new(ChoreoConfig::default()))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -49,6 +54,9 @@ fn main() {
             pty::write_pty,
             pty::resize_pty,
             pty::kill_session,
+            choreograph::set_window_mode,
+            choreograph::window_mode,
+            choreograph::hide_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OverTerm");
