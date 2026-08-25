@@ -11,7 +11,12 @@ pub mod ansi;
 pub mod heuristic;
 pub mod replay;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How long after a keystroke the session still counts as the user's,
+/// not the agent's. Long enough to cover the gap between letters, short
+/// enough that it expires while a submitted job runs.
+const TYPING_GRACE: Duration = Duration::from_millis(1000);
 
 /// What the agent inside the terminal appears to be doing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
@@ -30,9 +35,9 @@ pub enum AgentState {
 /// A single observation about the session.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Signal {
-    /// Claude Code Stop hook fired (wired up in a later milestone).
+    /// Claude Code Stop hook fired. No adapter emits this yet.
     HookStop,
-    /// Claude Code Notification hook fired (wired up in a later milestone).
+    /// Claude Code Notification hook fired. No adapter emits this yet.
     HookNotification,
     /// OSC 133;D command-finished sequence from shell integration.
     OscCommandEnd { exit: Option<i32> },
@@ -74,6 +79,20 @@ impl Signal {
     }
 }
 
+/// Whether a chunk written to the session looks like a person typing.
+///
+/// Not everything the frontend sends is a keystroke. Claude polls the
+/// terminal for its cursor position several times a second, and xterm.js
+/// answers every one of those, so replies like `ESC[?37;3R` arrive here as
+/// input. Counting them would make every idle session look permanently in
+/// use, so anything starting an escape sequence is left out.
+fn looks_like_typing(bytes: &[u8]) -> bool {
+    if bytes.first() == Some(&0x1b) {
+        return false;
+    }
+    bytes.iter().any(|&b| b >= 0x20 && b != 0x7f)
+}
+
 /// A source of signals watching one session's byte streams.
 pub trait Adapter: Send {
     /// Consume a chunk of terminal output.
@@ -83,6 +102,19 @@ pub trait Adapter: Send {
     fn tick(&mut self, now: Instant) -> Vec<Signal>;
     /// The terminal was resized. Adapters that model the screen need this.
     fn resize(&mut self, _cols: u16, _rows: u16) {}
+
+    /// Whether there is positive evidence the session is doing work right
+    /// now, as opposed to sitting on a question.
+    ///
+    /// Busy alone cannot answer this. A program that printed a dialog and
+    /// is waiting for an answer looks exactly like one that is grinding
+    /// away silently, and both hold the state at Busy. Hiding the terminal
+    /// in the first case hides the thing the user has to answer, so the
+    /// window choreography asks for evidence before collapsing rather than
+    /// treating Busy as permission.
+    fn is_working(&self, _now: Instant) -> bool {
+        false
+    }
 }
 
 /// One applied transition, with the signal that caused it.
@@ -98,6 +130,9 @@ pub struct Detector {
     adapters: Vec<Box<dyn Adapter>>,
     /// Set once any precise signal arrives; heuristics are ignored after.
     precise_seen: bool,
+    /// When the user last typed something. The window must not collapse
+    /// out from under someone in the middle of writing a message.
+    last_typing: Option<Instant>,
     /// Whether the user has submitted input since the last Done or Idle.
     /// Quiescence only counts as Done for work the user asked for, so a
     /// fresh shell printing its banner settles into Idle rather than
@@ -111,6 +146,7 @@ impl Detector {
             state: AgentState::Idle,
             adapters,
             precise_seen: false,
+            last_typing: None,
             awaiting_result: false,
         }
     }
@@ -134,7 +170,10 @@ impl Detector {
     }
 
     /// Feed user keystrokes. Enter means the user submitted something.
-    pub fn feed_input(&mut self, bytes: &[u8], _now: Instant) -> Vec<StateChange> {
+    pub fn feed_input(&mut self, bytes: &[u8], now: Instant) -> Vec<StateChange> {
+        if looks_like_typing(bytes) {
+            self.last_typing = Some(now);
+        }
         if bytes.contains(&b'\r') || bytes.contains(&b'\n') {
             self.apply(Signal::UserInput).into_iter().collect()
         } else {
@@ -147,6 +186,21 @@ impl Detector {
         for adapter in &mut self.adapters {
             adapter.resize(cols, rows);
         }
+    }
+
+    /// Whether any adapter can show the session is working. Used to decide
+    /// whether collapsing the window is safe.
+    pub fn is_working(&self, now: Instant) -> bool {
+        // Someone typing into the session repaints the screen with their
+        // own echo, which looks exactly like the agent producing output.
+        // While that is happening the terminal belongs to the user.
+        if self
+            .last_typing
+            .is_some_and(|t| now.duration_since(t) < TYPING_GRACE)
+        {
+            return false;
+        }
+        self.adapters.iter().any(|a| a.is_working(now))
     }
 
     /// Run periodic time-based checks. Call every ~100ms.
@@ -271,6 +325,44 @@ mod tests {
         assert_eq!(d.state(), AgentState::Idle);
         assert_eq!(d.feed_input(b"e\r", now).len(), 1);
         assert_eq!(d.state(), AgentState::Busy);
+    }
+
+    #[test]
+    fn typing_outranks_the_agent_looking_busy() {
+        // Someone composing a message repaints the screen with their own
+        // echo, which is indistinguishable from the agent producing
+        // output. While they are typing the terminal is theirs, even if
+        // the agent also looks busy.
+        use crate::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
+        let base = Instant::now();
+        let mut d = Detector::new(vec![Box::new(HeuristicAdapter::new(
+            HeuristicConfig::default(),
+        ))]);
+
+        let mut screen = String::from("working");
+        screen.push_str(&"\r\n".repeat(28));
+        screen.push_str("(esc to interrupt)");
+        d.feed_output(screen.as_bytes(), base);
+        assert!(d.is_working(base + Duration::from_millis(100)));
+
+        d.feed_input(b"talk to me about", base + Duration::from_millis(200));
+        assert!(!d.is_working(base + Duration::from_millis(700)));
+
+        // Once they stop, the agent's own evidence counts again, so a
+        // submitted job can still collapse the window while it runs.
+        assert!(d.is_working(base + Duration::from_millis(1500)));
+    }
+
+    #[test]
+    fn cursor_position_replies_are_not_typing() {
+        // xterm.js answers the cursor-position queries claude sends
+        // several times a second, and those replies come back through the
+        // same path as keystrokes. Treating them as typing would keep the
+        // window from ever collapsing.
+        let base = Instant::now();
+        let mut d = detector();
+        d.feed_input(b"\x1b[?37;3R", base);
+        assert!(d.last_typing.is_none());
     }
 
     #[test]
