@@ -8,6 +8,7 @@
 //! the quiescence timer cannot fight exact events.
 
 pub mod heuristic;
+pub mod hook;
 pub mod replay;
 
 use std::time::{Duration, Instant};
