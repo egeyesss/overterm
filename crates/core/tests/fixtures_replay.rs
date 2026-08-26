@@ -6,18 +6,31 @@
 use std::path::PathBuf;
 
 use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
-use overterm_core::detect::replay::{read_fixture, replay, replay_with};
+use overterm_core::detect::hook::HookAdapter;
+use overterm_core::detect::replay::{Event, read_fixture, replay, replay_with};
 use overterm_core::detect::{AgentState, Detector, Signal, StateChange};
 
-fn run(name: &str) -> Vec<(u64, StateChange)> {
+fn fixture(name: &str) -> Vec<Event> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures")
         .join(name);
-    let events = read_fixture(&path).expect("fixture should parse");
+    read_fixture(&path).expect("fixture should parse")
+}
+
+fn run(name: &str) -> Vec<(u64, StateChange)> {
+    let events = fixture(name);
     let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(
         HeuristicConfig::default(),
     ))]);
     replay(&mut detector, &events, 100, 1000)
+}
+
+/// The adapters a live session runs, in the order it runs them.
+fn hooked_detector() -> Detector {
+    Detector::new(vec![
+        Box::new(HookAdapter::new()),
+        Box::new(HeuristicAdapter::new(HeuristicConfig::default())),
+    ])
 }
 
 /// Replay a fixture and record, on every tick, whether the detector could
@@ -232,4 +245,106 @@ fn claude_streaming_an_answer_reads_as_working() {
         streaming.iter().all(|(_, working)| *working),
         "detector missed work in progress: {streaming:?}"
     );
+}
+
+/// Recording: `/bin/sh`, with the hooks installed. `claude` launched at
+/// 800ms, one question asked at 10s, `/exit` at 46s, then `sleep 2` in
+/// the shell claude left behind. The whole session in one file, because
+/// what claude leaves behind is as much of the story as what it does.
+const HOOKED: &str = "claude-hooked.ndjson";
+
+#[test]
+fn a_hooked_session_takes_its_answer_from_the_hook() {
+    let mut detector = hooked_detector();
+    let changes = replay(&mut detector, &fixture(HOOKED), 100, 1000);
+
+    let (at, done) = changes
+        .iter()
+        .find(|(_, c)| matches!(c.cause, Signal::HookStop))
+        .expect("the stop hook should have concluded the turn");
+    assert_eq!(done.to, AgentState::Done);
+    // Recorded at 12186ms. That timing belongs to the hook: the fallback
+    // detector needs 400ms of quiet and could not have reached any
+    // conclusion while the answer was still painting.
+    assert!(
+        (12_000..12_500).contains(at),
+        "expected the hook's own timing, got {at}ms"
+    );
+}
+
+#[test]
+fn guesswork_stays_off_while_the_hooked_program_runs() {
+    // Claude sits at its prompt for half a minute between finishing the
+    // answer and being asked to exit, repainting its status area the
+    // whole time. Nothing in there is a state change, and no timer gets
+    // to invent one while a source that knows is attached.
+    let mut detector = hooked_detector();
+    let changes = replay(&mut detector, &fixture(HOOKED), 100, 1000);
+
+    let stop = changes
+        .iter()
+        .position(|(_, c)| matches!(c.cause, Signal::HookStop))
+        .expect("the stop hook fired");
+    let (stopped_at, _) = changes[stop];
+    let (next_at, next) = &changes[stop + 1];
+    assert!(
+        next_at - stopped_at > 30_000,
+        "something concluded {}ms after the hook did: {next:?}",
+        next_at - stopped_at
+    );
+    assert_eq!(next.cause, Signal::UserInput, "and it was the user typing");
+}
+
+#[test]
+fn a_reported_turn_is_tracked_from_submit_to_stop() {
+    // The submit lands after the user's own keystrokes have already
+    // pushed the session to Busy, so it shows up as no transition at
+    // all. The turn behind it is what makes hiding the terminal safe.
+    let mut detector = hooked_detector();
+    let mut running: Vec<u64> = Vec::new();
+    replay_with(&mut detector, &fixture(HOOKED), 100, 1000, |t, _, d| {
+        if d.turn_in_flight() {
+            running.push(t);
+        }
+    });
+
+    let (first, last) = (
+        *running.first().expect("a turn should have been tracked"),
+        *running.last().expect("a turn should have been tracked"),
+    );
+    assert!(first > 10_400, "turn started too early, at {first}ms");
+    assert!(
+        last < 12_300,
+        "turn outlived the stop hook, ending {last}ms"
+    );
+}
+
+#[test]
+fn the_shell_claude_leaves_behind_is_still_watched() {
+    // A shell outlives the programs run inside it. Claude hands the
+    // alternate screen back on the way out, which is what puts the
+    // fallback detector in charge again; without that, `sleep 2` here
+    // would go unnoticed for as long as the hooks stayed trusted.
+    let mut detector = hooked_detector();
+    let changes = replay(&mut detector, &fixture(HOOKED), 100, 1000);
+
+    let after_exit: Vec<_> = changes.iter().filter(|(t, _)| *t > 50_000).collect();
+    let states: Vec<AgentState> = after_exit.iter().map(|(_, c)| c.to).collect();
+    assert_eq!(
+        states,
+        vec![AgentState::Busy, AgentState::Done],
+        "the command run after claude exited was not detected: {after_exit:#?}"
+    );
+    assert!(matches!(after_exit[1].1.cause, Signal::Quiescence { .. }));
+}
+
+#[test]
+fn hooks_do_not_change_what_an_unhooked_session_looks_like() {
+    // The fallback tier is the whole tool-agnostic pitch, and adding the
+    // marker adapter must not disturb a recording that has no markers.
+    for name in ["shell-ls-echo.ndjson", "claude-simple-question.ndjson"] {
+        let mut hooked = hooked_detector();
+        let with = replay(&mut hooked, &fixture(name), 100, 1000);
+        assert_eq!(states(&with), states(&run(name)), "{name}");
+    }
 }

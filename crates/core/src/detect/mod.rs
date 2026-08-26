@@ -724,8 +724,8 @@ mod tests {
 
     #[test]
     fn a_full_screen_program_leaving_hands_detection_back() {
-        // A session is a shell, not one run of one program. Claude takes
-        // the alternate screen on the way in and gives it back on the way
+        // A shell outlives the programs run inside it. Claude takes the
+        // alternate screen on the way in and gives it back on the way
         // out, and that is the moment the fallback detector has to work
         // again: nothing else is going to say so.
         let base = Instant::now();
