@@ -348,3 +348,46 @@ fn hooks_do_not_change_what_an_unhooked_session_looks_like() {
         assert_eq!(states(&with), states(&run(name)), "{name}");
     }
 }
+
+#[test]
+fn an_interrupted_turn_does_not_hold_the_session_busy() {
+    // Recording: the same shell, but the answer is interrupted with esc
+    // partway through. Claude Code fires no hook for that, so the turn
+    // starts at 10.7s and nothing ever ends it. Left alone the session
+    // would read busy until the hooks stopped being trusted, ten minutes
+    // later, with the terminal collapsed to a bar for all of it.
+    //
+    // The tail of the recording is a second turn still running when it
+    // stops, because the `/exit` typed at 40s was taken as a prompt.
+    // That one is genuinely unfinished and has to stay that way.
+    let mut detector = hooked_detector();
+    let changes = replay(
+        &mut detector,
+        &fixture("claude-interrupt.ndjson"),
+        100,
+        1000,
+    );
+
+    let resolved: Vec<_> = changes
+        .iter()
+        .filter(|(t, c)| (11_000..40_000).contains(t) && c.to == AgentState::Done)
+        .collect();
+    assert_eq!(
+        resolved.len(),
+        1,
+        "the interrupted turn should resolve exactly once: {changes:#?}"
+    );
+    let (at, done) = resolved[0];
+    assert!(
+        (20_000..30_000).contains(at),
+        "written off at {at}ms, which is nowhere near the interrupt"
+    );
+    // The quiet window it reports is how long the screen sat finished
+    // while the turn was still supposedly running. The fallback detector
+    // on its own only ever reports its own 400ms window, so this is the
+    // one place that number can come from.
+    assert!(
+        matches!(done.cause, Signal::Quiescence { quiet_ms } if quiet_ms >= 3_000),
+        "concluded by something else: {done:?}"
+    );
+}
