@@ -93,6 +93,10 @@ pub struct HeuristicAdapter {
     /// Signature of the screen after the last chunk, used to tell real
     /// display activity from output that changes nothing visible.
     screen_sig: u64,
+    /// Whether the screen model is on the alternate buffer. Full-screen
+    /// programs switch to it on the way in and hand it back on the way
+    /// out, which is the only announcement some of them make.
+    alternate_screen: bool,
     /// Set by OVERTERM_DETECT_DEBUG. Logs the screen state to stderr when
     /// the session is quiet but the prompt check keeps failing.
     debug: bool,
@@ -112,6 +116,7 @@ impl HeuristicAdapter {
             waiting_for_quiet: false,
             burst_announced: false,
             screen_sig: 0,
+            alternate_screen: false,
             debug: std::env::var_os("OVERTERM_DETECT_DEBUG").is_some(),
             last_debug: None,
         };
@@ -184,6 +189,17 @@ impl Adapter for HeuristicAdapter {
             signals.push(Signal::Bell);
         }
         self.seen_bells = bells;
+
+        // Handing the alternate screen back is how a full-screen program
+        // says it is gone. Nothing else does: a program that is killed,
+        // or interrupted, or whose hooks were removed part way through,
+        // announces nothing at all. Reported here because this is the
+        // only place a terminal is modelled.
+        let alternate = self.parser.screen().alternate_screen();
+        if self.alternate_screen && !alternate {
+            signals.push(Signal::FullScreenExited);
+        }
+        self.alternate_screen = alternate;
 
         // Output that leaves the screen untouched is not activity. Claude
         // polls the terminal with cursor position queries several times a
@@ -302,6 +318,29 @@ mod tests {
         assert!(a.is_working(at(base, 100)));
         assert!(!a.is_working(at(base, 600)));
         assert!(!a.is_working(at(base, 30_000)));
+    }
+
+    #[test]
+    fn handing_the_alternate_screen_back_is_reported_once() {
+        // Claude takes the alternate screen when it starts and gives it
+        // back when it exits, exactly once each.
+        let base = Instant::now();
+        let mut a = adapter();
+        assert!(a.feed(b"\x1b[?1049h", at(base, 0)).is_empty());
+        assert!(a.feed(b"working\r\n", at(base, 100)).is_empty());
+        assert_eq!(
+            a.feed(b"\x1b[?1049l", at(base, 200)),
+            vec![Signal::FullScreenExited]
+        );
+        // The shell prompt that follows is not a second departure.
+        assert!(a.feed(b"$ ", at(base, 300)).is_empty());
+    }
+
+    #[test]
+    fn an_ordinary_shell_session_never_reports_a_departure() {
+        let base = Instant::now();
+        let mut a = adapter();
+        assert!(a.feed(b"$ ls\r\nfile\r\n$ ", at(base, 0)).is_empty());
     }
 
     #[test]
