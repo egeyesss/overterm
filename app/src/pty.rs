@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
+use overterm_core::detect::hook::HookAdapter;
 use overterm_core::detect::replay::{Dir, Event, append_event, resize_payload};
 use overterm_core::{AgentState, Detector, PtySession, SpawnConfig, StateChange};
 use serde::Serialize;
@@ -153,7 +154,13 @@ pub fn spawn_session(
         rows,
         ..Default::default()
     });
-    let detector = Arc::new(Mutex::new(Detector::new(vec![Box::new(heuristic)])));
+    // Hooks first: a chunk can carry both an exact event and enough
+    // output for the fallback detector to guess at, and the exact one
+    // has to land before the guess is weighed.
+    let detector = Arc::new(Mutex::new(Detector::new(vec![
+        Box::new(HookAdapter::new()),
+        Box::new(heuristic),
+    ])));
     let alive = Arc::new(AtomicBool::new(true));
     let capture = Capture::open(&id);
 
@@ -193,10 +200,11 @@ pub fn spawn_session(
                     Ok(0) | Err(_) => break, // EOF or master closed
                     Ok(n) => {
                         capture_log(&capture, Dir::Output, &buf[..n]);
-                        let changes = detector
-                            .lock()
-                            .unwrap()
-                            .feed_output(&buf[..n], Instant::now());
+                        let (changes, submitted) = {
+                            let mut detector = detector.lock().unwrap();
+                            let changes = detector.feed_output(&buf[..n], Instant::now());
+                            (changes, detector.take_submit())
+                        };
                         if events
                             .send(PtyEvent::Output {
                                 bytes: buf[..n].to_vec(),
@@ -206,6 +214,11 @@ pub fn spawn_session(
                             break; // webview went away
                         }
                         emit_changes(&app, &choreo, &events, changes);
+                        // After the transitions, for the same reason the
+                        // keystroke path does it last.
+                        if submitted {
+                            choreo.on_submit(&app);
+                        }
                     }
                 }
             }
@@ -244,19 +257,24 @@ pub fn write_pty(
         .get_mut(&session_id)
         .ok_or_else(|| format!("no session {session_id}"))?;
     capture_log(&handle.capture, Dir::Input, data.as_bytes());
-    let changes = handle
-        .detector
-        .lock()
-        .unwrap()
-        .feed_input(data.as_bytes(), Instant::now());
+    let (changes, precise) = {
+        let mut detector = handle.detector.lock().unwrap();
+        let now = Instant::now();
+        let changes = detector.feed_input(data.as_bytes(), now);
+        (changes, detector.precise_source_active(now))
+    };
     emit_changes(&app, &choreo, &handle.events, changes);
     let written = handle
         .session
         .write(data.as_bytes())
         .map_err(|e| e.to_string());
+    // Enter only means "here is a job" when nothing better is reporting.
+    // Inside a program that reports its own submits, enter is just as
+    // likely to be answering a dialog or picking a menu item, and hiding
+    // the terminal for one of those takes away what the user is reading.
     // Scheduled after the transitions above so it is the collapse that
     // survives, not one they cancelled.
-    if data.contains('\r') || data.contains('\n') {
+    if !precise && (data.contains('\r') || data.contains('\n')) {
         choreo.on_submit(&app);
     }
     written
