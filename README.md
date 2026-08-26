@@ -18,12 +18,30 @@ Free, open source, tool-agnostic, with a portable core.
 
 - Runs any CLI in a real PTY, so full-colour interactive TUIs work untouched
 - Works out whether the session is idle, busy, finished, or waiting on you,
-  with no setup or integration required
+  with no setup or integration required. Running Claude Code, it reads the
+  real events and does not have to guess
 - Collapses to a one-line bar once you hand it a job, and expands again when
   it wants you. A draft you were part-way through typing follows you between
   the two views
 - Floats above other windows on every Space, including over full-screen apps
 - `Cmd+Shift+O` from anywhere summons or hides it
+
+## Claude Code
+
+Detection works on any CLI with nothing installed, by reading the terminal.
+For Claude Code it can be exact, so on first launch OverTerm adds four hook
+entries to `~/.claude/settings.json`: one each for a prompt being submitted,
+a turn finishing, a turn failing, and a permission prompt appearing.
+
+Every entry is a single `printf` that prints a fixed JSON object and exits.
+Claude Code turns that into an escape sequence in the terminal, and OverTerm
+reads it back out of the session it arrived on. Nothing listens on a port,
+there is no secret to handle, and it still works over SSH.
+
+The entries merge into whatever hooks you already have, and running the app
+again leaves one copy of each. To remove them, delete the four entries whose
+command mentions `overterm` from that file. Detection falls back to reading
+the terminal, which is what every other CLI gets.
 
 ## Stack
 
