@@ -27,6 +27,13 @@ const TYPING_GRACE: Duration = Duration::from_millis(1000);
 /// shell's life, and a session is a shell, not one run of one program.
 const PRECISE_TRUST: Duration = Duration::from_secs(600);
 
+/// How long the screen must look finished, while a precise source still
+/// says a turn is running, before that turn is written off.
+///
+/// Long enough that a program which pauses mid-turn is not cut short,
+/// short enough that an interrupted turn does not sit there.
+const STALE_TURN: Duration = Duration::from_secs(3);
+
 /// What the agent inside the terminal appears to be doing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,9 +51,14 @@ pub enum AgentState {
 /// A single observation about the session.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Signal {
-    /// Claude Code Stop hook fired. No adapter emits this yet.
+    /// The user handed a hooked program something to do.
+    HookSubmit,
+    /// A hooked program finished the work it was given.
     HookStop,
-    /// Claude Code Notification hook fired. No adapter emits this yet.
+    /// A hooked program's work ended on an error rather than an answer.
+    /// Still finished: without this the session sits busy forever.
+    HookStopFailure,
+    /// A hooked program is waiting on the user.
     HookNotification,
     /// OSC 133;D command-finished sequence from shell integration.
     OscCommandEnd { exit: Option<i32> },
@@ -60,6 +72,9 @@ pub enum Signal {
     OutputBurst,
     /// The user submitted input (pressed enter).
     UserInput,
+    /// A full-screen program gave the terminal back. Says nothing about
+    /// the agent; it means whoever was reporting precisely is gone.
+    FullScreenExited,
 }
 
 /// How much trust a signal carries.
@@ -69,21 +84,24 @@ pub enum SignalClass {
     Heuristic,
     /// Exact events from hooks or shell integration.
     Precise,
-    /// The user's own actions. Always trusted.
+    /// Things that are simply so: the user's own actions, and what the
+    /// terminal itself reports. Always trusted.
     Direct,
 }
 
 impl Signal {
     pub fn class(&self) -> SignalClass {
         match self {
-            Signal::HookStop
+            Signal::HookSubmit
+            | Signal::HookStop
+            | Signal::HookStopFailure
             | Signal::HookNotification
             | Signal::OscCommandEnd { .. }
             | Signal::OscPromptStart => SignalClass::Precise,
             Signal::Bell | Signal::Quiescence { .. } | Signal::OutputBurst => {
                 SignalClass::Heuristic
             }
-            Signal::UserInput => SignalClass::Direct,
+            Signal::UserInput | Signal::FullScreenExited => SignalClass::Direct,
         }
     }
 }
@@ -149,6 +167,17 @@ pub struct Detector {
     /// fresh shell printing its banner settles into Idle rather than
     /// announcing a finished task at launch.
     awaiting_result: bool,
+    /// When a precise source said the work it is doing started, if it is
+    /// still doing it. Kept here rather than in the adapter that reports
+    /// it because every signal passes through here, so there is one copy
+    /// of the fact and no way for two of them to disagree.
+    turn_since: Option<Instant>,
+    /// When the screen first looked finished while a precise source
+    /// still said work was running.
+    quiet_while_running: Option<Instant>,
+    /// A precise submit has arrived that the window has not been told
+    /// about yet.
+    submit_pending: bool,
 }
 
 impl Detector {
@@ -159,6 +188,9 @@ impl Detector {
             precise_since: None,
             last_typing: None,
             awaiting_result: false,
+            turn_since: None,
+            quiet_while_running: None,
+            submit_pending: false,
         }
     }
 
@@ -211,9 +243,29 @@ impl Detector {
     /// detecting.
     pub fn detach_precise_source(&mut self) {
         self.precise_since = None;
+        self.end_turn();
     }
 
-    /// Whether any adapter can show the session is working. Used to decide
+    /// Whether a precise source says work is running right now.
+    pub fn turn_in_flight(&self) -> bool {
+        self.turn_since.is_some()
+    }
+
+    /// Whether a precise submit has arrived since this was last asked.
+    ///
+    /// The window collapses when the user hands the session a job, and a
+    /// submit landing while the session already reads as busy produces no
+    /// transition for that to hang off, so it is reported separately.
+    pub fn take_submit(&mut self) -> bool {
+        std::mem::take(&mut self.submit_pending)
+    }
+
+    fn end_turn(&mut self) {
+        self.turn_since = None;
+        self.quiet_while_running = None;
+    }
+
+    /// Whether anything can show the session is working. Used to decide
     /// whether collapsing the window is safe.
     pub fn is_working(&self, now: Instant) -> bool {
         // Someone typing into the session repaints the screen with their
@@ -225,6 +277,11 @@ impl Detector {
         {
             return false;
         }
+        // A precise source saying its work is still running outranks the
+        // screen, which shows nothing at all during a silent tool call.
+        if self.turn_in_flight() {
+            return true;
+        }
         self.adapters.iter().any(|a| a.is_working(now))
     }
 
@@ -235,17 +292,44 @@ impl Detector {
         for signal in signals {
             changes.extend(self.apply(signal, now));
         }
+        changes.extend(self.write_off_stale_turn(now));
         changes
     }
 
     /// Push one signal through the suppression rule and the state machine.
     pub fn apply(&mut self, signal: Signal, now: Instant) -> Option<StateChange> {
+        // Not a reading of the agent at all: whoever was reporting
+        // precisely has gone, and the session outlives them.
+        if signal == Signal::FullScreenExited {
+            self.detach_precise_source();
+            return None;
+        }
+
         match signal.class() {
             SignalClass::Precise => self.precise_since = Some(now),
-            SignalClass::Heuristic if self.precise_source_active(now) => return None,
+            SignalClass::Heuristic if self.precise_source_active(now) => {
+                self.watch_screen_during_turn(&signal, now);
+                return None;
+            }
             _ => {}
         }
 
+        match signal {
+            Signal::HookSubmit => {
+                self.turn_since = Some(now);
+                self.quiet_while_running = None;
+                self.submit_pending = true;
+            }
+            Signal::HookStop | Signal::HookStopFailure => self.end_turn(),
+            _ => {}
+        }
+
+        self.conclude(signal)
+    }
+
+    /// Run one signal through the state machine, with no suppression and
+    /// no bookkeeping.
+    fn conclude(&mut self, signal: Signal) -> Option<StateChange> {
         let next = self.transition(&signal)?;
         let change = StateChange {
             from: self.state,
@@ -256,15 +340,56 @@ impl Detector {
         Some(change)
     }
 
+    /// Keep track of what the screen says while a precise source has a
+    /// turn running. Its conclusions are still ignored; they are only
+    /// worth timing.
+    fn watch_screen_during_turn(&mut self, signal: &Signal, now: Instant) {
+        if !self.turn_in_flight() {
+            return;
+        }
+        match signal {
+            Signal::Quiescence { .. } => {
+                self.quiet_while_running.get_or_insert(now);
+            }
+            Signal::OutputBurst => self.quiet_while_running = None,
+            _ => {}
+        }
+    }
+
+    /// Finish a turn that ended without anything saying so.
+    ///
+    /// A turn can end in silence: the user interrupts it, or the program
+    /// running it is killed. Neither fires a hook, so a turn believed to
+    /// be running would hold the session busy for as long as the precise
+    /// source is trusted, and hide the terminal for all of it.
+    ///
+    /// The screen settles it. The fallback detector only calls a session
+    /// quiet once the working hint is off screen and output has stopped,
+    /// which is what the end of a turn looks like, so a quiet reading
+    /// that persists through a turn means the turn is over.
+    fn write_off_stale_turn(&mut self, now: Instant) -> Vec<StateChange> {
+        let Some(since) = self.quiet_while_running else {
+            return Vec::new();
+        };
+        if now.duration_since(since) < STALE_TURN {
+            return Vec::new();
+        }
+        self.end_turn();
+        let quiet_ms = now.duration_since(since).as_millis() as u64;
+        self.conclude(Signal::Quiescence { quiet_ms })
+            .into_iter()
+            .collect()
+    }
+
     fn transition(&mut self, signal: &Signal) -> Option<AgentState> {
         use AgentState::*;
         use Signal::*;
         match (self.state, signal) {
-            (Busy, UserInput) => {
+            (Busy, UserInput | HookSubmit) => {
                 self.awaiting_result = true;
                 None
             }
-            (_, UserInput) => {
+            (_, UserInput | HookSubmit) => {
                 self.awaiting_result = true;
                 Some(Busy)
             }
@@ -277,7 +402,7 @@ impl Detector {
                     Some(Idle)
                 }
             }
-            (Busy | NeedsInput, HookStop | OscCommandEnd { .. }) => {
+            (Busy | NeedsInput, HookStop | HookStopFailure | OscCommandEnd { .. }) => {
                 self.awaiting_result = false;
                 Some(Done)
             }
@@ -495,6 +620,136 @@ mod tests {
         d.apply_now(Signal::HookNotification);
         assert_eq!(d.state(), AgentState::NeedsInput);
         assert_eq!(d.apply_now(Signal::HookStop).unwrap().to, AgentState::Done);
+    }
+
+    #[test]
+    fn a_turn_that_errors_out_still_finishes() {
+        // A turn dying on a rate limit reports differently from one that
+        // answered, but the session is just as finished either way. Left
+        // busy, the window would hide the terminal until trust lapsed.
+        let mut d = detector();
+        d.apply_now(Signal::HookSubmit);
+        assert_eq!(d.state(), AgentState::Busy);
+        assert_eq!(
+            d.apply_now(Signal::HookStopFailure).unwrap().to,
+            AgentState::Done
+        );
+        assert!(!d.turn_in_flight());
+    }
+
+    #[test]
+    fn a_precise_submit_is_reported_even_with_no_transition_to_show() {
+        // The user's keystrokes reach Busy before the hook does, so the
+        // submit itself changes nothing. The window still has to hear
+        // about it, or handing over a job never collapses the terminal.
+        let base = Instant::now();
+        let mut d = detector();
+        d.feed_input(b"do the thing\r", base);
+        assert_eq!(d.state(), AgentState::Busy);
+        assert!(!d.take_submit());
+
+        assert!(d.apply(Signal::HookSubmit, base).is_none());
+        assert!(d.take_submit(), "the submit must be reported");
+        assert!(!d.take_submit(), "and only once");
+    }
+
+    #[test]
+    fn work_a_precise_source_reports_counts_as_working() {
+        // A tool call producing no output looks identical to a program
+        // sitting on a question, and the screen cannot tell them apart.
+        // The source running the turn can.
+        let base = Instant::now();
+        let mut d = detector();
+        assert!(!d.is_working(base));
+        d.apply(Signal::HookSubmit, base);
+        assert!(d.is_working(base));
+        d.apply(Signal::HookStop, base);
+        assert!(!d.is_working(base));
+    }
+
+    #[test]
+    fn a_turn_that_ends_in_silence_is_written_off() {
+        // Interrupting a turn fires no hook at all, so nothing says the
+        // work stopped. The screen going quiet and staying quiet has to
+        // be enough, or the session is stuck busy until trust lapses.
+        let base = Instant::now();
+        let mut d = detector();
+        d.apply(Signal::HookSubmit, base);
+        assert_eq!(d.state(), AgentState::Busy);
+
+        // The fallback detector reaches a conclusion, and is ignored.
+        assert!(d.apply(quiet(), base).is_none());
+        assert_eq!(d.state(), AgentState::Busy);
+        assert!(d.tick(base + Duration::from_secs(1)).is_empty());
+        assert!(d.turn_in_flight());
+
+        let changes = d.tick(base + STALE_TURN);
+        assert_eq!(changes.len(), 1, "expected one conclusion: {changes:#?}");
+        assert_eq!(changes[0].to, AgentState::Done);
+        assert!(!d.turn_in_flight());
+    }
+
+    #[test]
+    fn a_turn_that_goes_quiet_and_starts_up_again_is_left_alone() {
+        // Programs pause mid-turn. A quiet moment followed by more work
+        // is not the end of anything, and cutting it short would report
+        // done while the agent is still going.
+        let base = Instant::now();
+        let mut d = detector();
+        d.apply(Signal::HookSubmit, base);
+        d.apply(quiet(), base);
+        d.apply(Signal::OutputBurst, base + Duration::from_secs(1));
+
+        assert!(d.tick(base + STALE_TURN).is_empty());
+        assert_eq!(d.state(), AgentState::Busy);
+        assert!(d.turn_in_flight());
+    }
+
+    #[test]
+    fn the_screen_only_writes_off_a_turn_that_is_running() {
+        // With no turn in flight there is nothing to write off, and a
+        // suppressed guess must stay suppressed.
+        let base = Instant::now();
+        let mut d = detector();
+        d.apply(Signal::UserInput, base);
+        d.apply(Signal::HookStop, base);
+        assert_eq!(d.state(), AgentState::Done);
+
+        d.apply(Signal::OutputBurst, base);
+        assert!(d.apply(quiet(), base).is_none());
+        assert!(d.tick(base + STALE_TURN).is_empty());
+        assert_eq!(d.state(), AgentState::Done);
+    }
+
+    #[test]
+    fn a_full_screen_program_leaving_hands_detection_back() {
+        // A session is a shell, not one run of one program. Claude takes
+        // the alternate screen on the way in and gives it back on the way
+        // out, and that is the moment the fallback detector has to work
+        // again: nothing else is going to say so.
+        let base = Instant::now();
+        let mut d = detector();
+        d.apply(Signal::HookSubmit, base);
+        d.apply(Signal::HookStop, base);
+        assert!(d.precise_source_active(base));
+        assert!(d.apply(quiet(), base).is_none());
+
+        assert!(d.apply(Signal::FullScreenExited, base).is_none());
+        assert!(!d.precise_source_active(base));
+        assert!(!d.turn_in_flight());
+
+        d.apply(Signal::UserInput, base);
+        assert_eq!(d.apply(quiet(), base).unwrap().to, AgentState::Done);
+    }
+
+    #[test]
+    fn a_full_screen_program_killed_mid_turn_does_not_stay_working() {
+        let base = Instant::now();
+        let mut d = detector();
+        d.apply(Signal::HookSubmit, base);
+        assert!(d.is_working(base));
+        d.apply(Signal::FullScreenExited, base);
+        assert!(!d.is_working(base));
     }
 
     #[test]
