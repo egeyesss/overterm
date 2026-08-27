@@ -4,7 +4,7 @@
 //! the app talks to `PlatformWindow` only, so porting to Windows or Linux
 //! means writing one more implementation and changing nothing else.
 
-use tauri::{Runtime, WebviewWindow};
+use tauri::{App, Runtime, WebviewWindow};
 
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(not(target_os = "macos"), path = "fallback.rs")]
@@ -21,6 +21,10 @@ pub trait PlatformWindow {
 
     /// Stay visible on every Space, including other apps' full-screen ones.
     fn join_all_spaces(&self) -> Result<(), String>;
+
+    /// Whether the window is on the Space the user is looking at. A
+    /// window can be visible and still be somewhere the user cannot see.
+    fn is_on_active_space(&self) -> bool;
 
     /// Bring the window forward without taking keyboard focus. This is what
     /// an agent finishing its work triggers, so it must never steal a
@@ -41,9 +45,21 @@ impl<R: Runtime> PlatformWindow for WebviewWindow<R> {
         imp::join_all_spaces(self)
     }
 
+    fn is_on_active_space(&self) -> bool {
+        imp::is_on_active_space(self)
+    }
+
     fn show_without_focus(&self) -> Result<(), String> {
         imp::show_without_focus(self)
     }
+}
+
+/// Tell the OS this is an overlay rather than an ordinary app.
+///
+/// Separate from the window calls because it is a property of the
+/// application, and it has to happen before any window is shown.
+pub fn make_accessory<R: Runtime>(app: &mut App<R>) {
+    imp::make_accessory(app);
 }
 
 /// Apply the full overlay treatment. Call once during setup, on the main
@@ -52,5 +68,13 @@ pub fn make_overlay<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String>
     window.stay_visible_when_inactive()?;
     window.set_floating()?;
     window.join_all_spaces()?;
+    // Set OVERTERM_WINDOW_DEBUG to have the window report what it
+    // actually ended up with. Worth keeping: the flags that let a window
+    // sit over another app's full-screen Space were found by reading
+    // this back rather than by reasoning about what had been set.
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("OVERTERM_WINDOW_DEBUG").is_some() {
+        imp::report_state(window, "after setup")?;
+    }
     Ok(())
 }
