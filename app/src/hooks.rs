@@ -246,6 +246,29 @@ fn install_once(claude: &Path, config: &Path) -> Result<bool, String> {
     Ok(changed)
 }
 
+/// Take the hook entries out on the way to being uninstalled.
+///
+/// macOS runs nothing of ours when an app is dragged to the trash, so a
+/// package manager has to call this. Removing the app also forgets that
+/// the setup was ever done, because being uninstalled is not the same as
+/// choosing to go without the hooks: install it again and it should set
+/// itself up again.
+pub fn uninstall_on_removal() -> Result<bool, String> {
+    let claude = settings_path().ok_or("no home directory to find the settings file in")?;
+    let config = crate::settings::path().ok_or("no home directory to keep settings in")?;
+    uninstall_once(&claude, &config)
+}
+
+fn uninstall_once(claude: &Path, config: &Path) -> Result<bool, String> {
+    let removed = uninstall(claude)?;
+    let mut settings = crate::settings::load_from(config);
+    if settings.claude_hooks_installed {
+        settings.claude_hooks_installed = false;
+        crate::settings::save_to(config, &settings)?;
+    }
+    Ok(removed)
+}
+
 /// Where the two files live on this machine.
 pub fn install_on_first_run() -> Result<bool, String> {
     let claude = settings_path().ok_or("no home directory to find the settings file in")?;
@@ -606,6 +629,27 @@ mod tests {
 
         write_settings(&claude, r#"{ "model": "opus" }"#);
         assert!(install_once(&claude, &config).expect("second launch"));
+        assert!(installed(&claude).expect("check"));
+    }
+
+    #[test]
+    fn removing_the_app_takes_the_hook_entries_with_it() {
+        // Dragging an app to the trash runs none of its own code, so a
+        // package manager has to call this on the way out. Otherwise the
+        // entries outlive the thing that reads them.
+        let claude = scratch("removal-claude");
+        let config = scratch_config("removal-config");
+        write_settings(&claude, r#"{ "model": "opus" }"#);
+        install_once(&claude, &config).expect("first launch");
+
+        assert!(uninstall_once(&claude, &config).expect("removal"));
+        assert!(!installed(&claude).expect("check"));
+        assert_eq!(read_settings(&claude)["model"], json!("opus"));
+
+        // Being uninstalled is not the same as choosing to go without
+        // them, so installing the app again sets them up again.
+        assert!(!crate::settings::load_from(&config).claude_hooks_installed);
+        assert!(install_once(&claude, &config).expect("a fresh install"));
         assert!(installed(&claude).expect("check"));
     }
 

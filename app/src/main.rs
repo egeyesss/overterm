@@ -15,7 +15,26 @@ use choreograph::Choreographer;
 
 pub const MAIN_WINDOW: &str = "main";
 
+/// Flag a package manager calls while removing the app.
+const UNINSTALL_HOOKS: &str = "--uninstall-hooks";
+
 fn main() {
+    // Nothing of ours runs when an app is dragged to the trash, so the
+    // hook entries would outlive the thing that reads them. A package
+    // manager can run this on the way out. No window, so it is answered
+    // before anything starts.
+    if std::env::args().any(|arg| arg == UNINSTALL_HOOKS) {
+        match hooks::uninstall_on_removal() {
+            Ok(true) => println!("removed the Claude Code hook entries"),
+            Ok(false) => println!("no Claude Code hook entries to remove"),
+            Err(e) => {
+                eprintln!("could not remove the hook entries: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     // Summons or hides the overlay from any app. Configurable later.
     let toggle = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO);
 
