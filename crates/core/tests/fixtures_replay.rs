@@ -6,18 +6,31 @@
 use std::path::PathBuf;
 
 use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
-use overterm_core::detect::replay::{read_fixture, replay, replay_with};
+use overterm_core::detect::hook::HookAdapter;
+use overterm_core::detect::replay::{Event, read_fixture, replay, replay_with};
 use overterm_core::detect::{AgentState, Detector, Signal, StateChange};
 
-fn run(name: &str) -> Vec<(u64, StateChange)> {
+fn fixture(name: &str) -> Vec<Event> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures")
         .join(name);
-    let events = read_fixture(&path).expect("fixture should parse");
+    read_fixture(&path).expect("fixture should parse")
+}
+
+fn run(name: &str) -> Vec<(u64, StateChange)> {
+    let events = fixture(name);
     let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(
         HeuristicConfig::default(),
     ))]);
     replay(&mut detector, &events, 100, 1000)
+}
+
+/// The adapters a live session runs, in the order it runs them.
+fn hooked_detector() -> Detector {
+    Detector::new(vec![
+        Box::new(HookAdapter::new()),
+        Box::new(HeuristicAdapter::new(HeuristicConfig::default())),
+    ])
 }
 
 /// Replay a fixture and record, on every tick, whether the detector could
@@ -231,5 +244,198 @@ fn claude_streaming_an_answer_reads_as_working() {
     assert!(
         streaming.iter().all(|(_, working)| *working),
         "detector missed work in progress: {streaming:?}"
+    );
+}
+
+/// Recording: `/bin/sh`, with the hooks installed. `claude` launched at
+/// 800ms, one question asked at 10s, `/exit` at 46s, then `sleep 2` in
+/// the shell claude left behind. The whole session in one file, because
+/// what claude leaves behind is as much of the story as what it does.
+const HOOKED: &str = "claude-hooked.ndjson";
+
+#[test]
+fn a_hooked_session_takes_its_answer_from_the_hook() {
+    let mut detector = hooked_detector();
+    let changes = replay(&mut detector, &fixture(HOOKED), 100, 1000);
+
+    let (at, done) = changes
+        .iter()
+        .find(|(_, c)| matches!(c.cause, Signal::HookStop))
+        .expect("the stop hook should have concluded the turn");
+    assert_eq!(done.to, AgentState::Done);
+    // Recorded at 12186ms. That timing belongs to the hook: the fallback
+    // detector needs 400ms of quiet and could not have reached any
+    // conclusion while the answer was still painting.
+    assert!(
+        (12_000..12_500).contains(at),
+        "expected the hook's own timing, got {at}ms"
+    );
+}
+
+#[test]
+fn guesswork_stays_off_while_the_hooked_program_runs() {
+    // Claude sits at its prompt for half a minute between finishing the
+    // answer and being asked to exit, repainting its status area the
+    // whole time. Nothing in there is a state change, and no timer gets
+    // to invent one while a source that knows is attached.
+    let mut detector = hooked_detector();
+    let changes = replay(&mut detector, &fixture(HOOKED), 100, 1000);
+
+    let stop = changes
+        .iter()
+        .position(|(_, c)| matches!(c.cause, Signal::HookStop))
+        .expect("the stop hook fired");
+    let (stopped_at, _) = changes[stop];
+    let (next_at, next) = &changes[stop + 1];
+    assert!(
+        next_at - stopped_at > 30_000,
+        "something concluded {}ms after the hook did: {next:?}",
+        next_at - stopped_at
+    );
+    assert_eq!(next.cause, Signal::UserInput, "and it was the user typing");
+}
+
+#[test]
+fn a_reported_turn_is_tracked_from_submit_to_stop() {
+    // The submit lands after the user's own keystrokes have already
+    // pushed the session to Busy, so it shows up as no transition at
+    // all. The turn behind it is what makes hiding the terminal safe.
+    let mut detector = hooked_detector();
+    let mut running: Vec<u64> = Vec::new();
+    replay_with(&mut detector, &fixture(HOOKED), 100, 1000, |t, _, d| {
+        if d.turn_in_flight() {
+            running.push(t);
+        }
+    });
+
+    let (first, last) = (
+        *running.first().expect("a turn should have been tracked"),
+        *running.last().expect("a turn should have been tracked"),
+    );
+    assert!(first > 10_400, "turn started too early, at {first}ms");
+    assert!(
+        last < 12_300,
+        "turn outlived the stop hook, ending {last}ms"
+    );
+}
+
+#[test]
+fn the_shell_claude_leaves_behind_is_still_watched() {
+    // A shell outlives the programs run inside it. Claude hands the
+    // alternate screen back on the way out, which is what puts the
+    // fallback detector in charge again; without that, `sleep 2` here
+    // would go unnoticed for as long as the hooks stayed trusted.
+    let mut detector = hooked_detector();
+    let changes = replay(&mut detector, &fixture(HOOKED), 100, 1000);
+
+    let after_exit: Vec<_> = changes.iter().filter(|(t, _)| *t > 50_000).collect();
+    let states: Vec<AgentState> = after_exit.iter().map(|(_, c)| c.to).collect();
+    assert_eq!(
+        states,
+        vec![AgentState::Busy, AgentState::Done],
+        "the command run after claude exited was not detected: {after_exit:#?}"
+    );
+    assert!(matches!(after_exit[1].1.cause, Signal::Quiescence { .. }));
+}
+
+#[test]
+fn hooks_do_not_change_what_an_unhooked_session_looks_like() {
+    // The fallback tier is the whole tool-agnostic pitch, and adding the
+    // marker adapter must not disturb a recording that has no markers.
+    for name in ["shell-ls-echo.ndjson", "claude-simple-question.ndjson"] {
+        let mut hooked = hooked_detector();
+        let with = replay(&mut hooked, &fixture(name), 100, 1000);
+        assert_eq!(states(&with), states(&run(name)), "{name}");
+    }
+}
+
+#[test]
+fn an_interrupted_turn_does_not_hold_the_session_busy() {
+    // Recording: the same shell, but the answer is interrupted with esc
+    // partway through. Claude Code fires no hook for that, so the turn
+    // starts at 10.7s and nothing ever ends it. Left alone the session
+    // would read busy until the hooks stopped being trusted, ten minutes
+    // later, with the terminal collapsed to a bar for all of it.
+    //
+    // The tail of the recording is a second turn still running when it
+    // stops, because the `/exit` typed at 40s was taken as a prompt.
+    // That one is genuinely unfinished and has to stay that way.
+    let mut detector = hooked_detector();
+    let changes = replay(
+        &mut detector,
+        &fixture("claude-interrupt.ndjson"),
+        100,
+        1000,
+    );
+
+    let resolved: Vec<_> = changes
+        .iter()
+        .filter(|(t, c)| (11_000..40_000).contains(t) && c.to == AgentState::Done)
+        .collect();
+    assert_eq!(
+        resolved.len(),
+        1,
+        "the interrupted turn should resolve exactly once: {changes:#?}"
+    );
+    let (at, done) = resolved[0];
+    assert!(
+        (20_000..30_000).contains(at),
+        "written off at {at}ms, which is nowhere near the interrupt"
+    );
+    // The quiet window it reports is how long the screen sat finished
+    // while the turn was still supposedly running. The fallback detector
+    // on its own only ever reports its own 400ms window, so this is the
+    // one place that number can come from.
+    assert!(
+        matches!(done.cause, Signal::Quiescence { quiet_ms } if quiet_ms >= 3_000),
+        "concluded by something else: {done:?}"
+    );
+}
+
+#[test]
+fn a_silent_command_reads_as_working_for_as_long_as_it_runs() {
+    // `sleep 2` prints nothing between the echoed command and the prompt
+    // coming back. Nothing on screen moves, so waiting for output before
+    // believing work is happening leaves the terminal in the way for the
+    // whole of it, and the window never gets to collapse at all.
+    // Sampled from 3300ms because the submit at 2200ms was typed, and
+    // for a second after a keystroke the terminal belongs to the user
+    // whatever else is going on. The collapse asks at 1500ms and again
+    // at 2000ms, both after that, so the grace never blocks it.
+    let during: Vec<(u64, bool)> = working_over_time("zsh-sleep.ndjson")
+        .into_iter()
+        .filter(|(t, _)| (3_300..4_100).contains(t))
+        .collect();
+    assert!(!during.is_empty(), "no samples while sleep ran");
+    assert!(
+        during.iter().all(|&(_, working)| working),
+        "gave up partway through a running command: {during:?}"
+    );
+
+    // And it stops the moment the prompt comes back, or the window would
+    // never come out of the bar again.
+    let after: Vec<(u64, bool)> = working_over_time("zsh-sleep.ndjson")
+        .into_iter()
+        .filter(|(t, _)| (5_000..5_400).contains(t))
+        .collect();
+    assert!(
+        after.iter().all(|&(_, working)| !working),
+        "still called it work after the prompt returned: {after:?}"
+    );
+}
+
+#[test]
+fn the_shell_claude_leaves_behind_can_hide_the_terminal_too() {
+    // The same thing, in the shell after claude exits: the `sleep 2` at
+    // the end of that recording has to read as work, or handing back
+    // detection is only half the job.
+    let during: Vec<(u64, bool)> = working_over_time(HOOKED)
+        .into_iter()
+        .filter(|(t, _)| (57_200..57_900).contains(t))
+        .collect();
+    assert!(!during.is_empty(), "no samples while the sleep ran");
+    assert!(
+        during.iter().all(|&(_, working)| working),
+        "the shell after claude could never hide the terminal: {during:?}"
     );
 }

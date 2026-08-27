@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod choreograph;
+mod hooks;
 mod platform;
 mod pty;
+mod settings;
 
 use overterm_core::ChoreoConfig;
 use tauri::Manager;
@@ -39,6 +41,14 @@ fn main() {
             if let Err(e) = platform::make_overlay(&window) {
                 eprintln!("[platform] overlay setup failed: {e}");
             }
+            // Detection works without these; they make it exact for the
+            // tools that report. Never fatal: a settings file we cannot
+            // read or write leaves the fallback detector in charge.
+            match hooks::install_on_first_run() {
+                Ok(true) => eprintln!("[hooks] installed"),
+                Ok(false) => {}
+                Err(e) => eprintln!("[hooks] not installed: {e}"),
+            }
             // A taken hotkey fails to register; the app is still usable, so
             // report it instead of refusing to start.
             if let Err(e) =
@@ -57,6 +67,9 @@ fn main() {
             choreograph::set_window_mode,
             choreograph::window_mode,
             choreograph::hide_window,
+            hooks::install_hooks,
+            hooks::uninstall_hooks,
+            hooks::hooks_installed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OverTerm");
