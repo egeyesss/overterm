@@ -13,6 +13,8 @@ tauri-build = { version = "2", features = [] }
 overterm-core = { path = "../crates/core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-global-shortcut = "2"
+# Already in the lock. The settings file format is a locked decision.
+toml = "1"
 serde.workspace = true
 serde_json.workspace = true
 

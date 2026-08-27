@@ -5,6 +5,7 @@ mod choreograph;
 mod hooks;
 mod platform;
 mod pty;
+mod settings;
 
 use overterm_core::ChoreoConfig;
 use tauri::Manager;
@@ -43,7 +44,7 @@ fn main() {
             // Detection works without these; they make it exact for the
             // tools that report. Never fatal: a settings file we cannot
             // read or write leaves the fallback detector in charge.
-            match hooks::install_hooks() {
+            match hooks::install_on_first_run() {
                 Ok(true) => eprintln!("[hooks] installed"),
                 Ok(false) => {}
                 Err(e) => eprintln!("[hooks] not installed: {e}"),

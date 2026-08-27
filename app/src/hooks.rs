@@ -217,6 +217,35 @@ pub fn installed(path: &Path) -> Result<bool, String> {
     }))
 }
 
+/// Put the hooks in place the first time the app runs, and leave that
+/// file alone from then on.
+///
+/// Doing it on every launch would undo someone taking the entries out,
+/// which is worse than never having offered: it is their config file. A
+/// launch that fails to install does not count as the first one, so a
+/// settings file that was mid-edit gets another chance.
+fn install_once(claude: &Path, config: &Path) -> Result<bool, String> {
+    let mut settings = crate::settings::load_from(config);
+    if settings.claude_hooks_installed {
+        return Ok(false);
+    }
+    let changed = install(claude)?;
+    settings.claude_hooks_installed = true;
+    if let Err(e) = crate::settings::save_to(config, &settings) {
+        // The hooks are in. Not being able to write that down means the
+        // next launch checks again and finds nothing to do.
+        eprintln!("[hooks] installed but could not record it: {e}");
+    }
+    Ok(changed)
+}
+
+/// Where the two files live on this machine.
+pub fn install_on_first_run() -> Result<bool, String> {
+    let claude = settings_path().ok_or("no home directory to find the settings file in")?;
+    let config = crate::settings::path().ok_or("no home directory to keep settings in")?;
+    install_once(&claude, &config)
+}
+
 fn at_settings<T>(action: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
     let path = settings_path().ok_or("no home directory to find the settings file in")?;
     action(&path)
@@ -256,6 +285,15 @@ mod tests {
 
     fn write_settings(path: &Path, text: &str) {
         std::fs::write(path, text).expect("write fixture");
+    }
+
+    /// A config file of its own, so the first-run tests do not share one.
+    fn scratch_config(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("overterm-hooks-test");
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        let path = dir.join(format!("{name}.toml"));
+        let _ = std::fs::remove_file(&path);
+        path
     }
 
     fn read_settings(path: &Path) -> Value {
@@ -495,5 +533,58 @@ mod tests {
                 .apply(Signal::Quiescence { quiet_ms: 400 }, now)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn the_hooks_go_in_once_and_stay_out_once_removed() {
+        // The whole point of doing this once. Putting back what someone
+        // deleted from their own config file, every time the app starts,
+        // is worse than never having set it up for them.
+        let claude = scratch("first-run-claude");
+        let config = scratch_config("first-run-config");
+        write_settings(&claude, r#"{ "model": "opus" }"#);
+
+        assert!(install_once(&claude, &config).expect("first launch"));
+        assert!(installed(&claude).expect("check"));
+
+        uninstall(&claude).expect("the user takes them out again");
+        assert!(!installed(&claude).expect("check"));
+
+        assert!(!install_once(&claude, &config).expect("a later launch"));
+        assert!(
+            !installed(&claude).expect("check"),
+            "the app put back what the user removed"
+        );
+    }
+
+    #[test]
+    fn a_first_run_that_fails_is_tried_again_next_launch() {
+        // A settings file caught mid-edit should not cost the user the
+        // integration for good.
+        let claude = scratch("retry-claude");
+        let config = scratch_config("retry-config");
+        write_settings(&claude, "[1, 2, 3]");
+
+        assert!(install_once(&claude, &config).is_err());
+        assert!(
+            !crate::settings::load_from(&config).claude_hooks_installed,
+            "a failed launch must not count as the one that set them up"
+        );
+
+        write_settings(&claude, r#"{ "model": "opus" }"#);
+        assert!(install_once(&claude, &config).expect("second launch"));
+        assert!(installed(&claude).expect("check"));
+    }
+
+    #[test]
+    fn hooks_already_there_still_count_as_set_up() {
+        // Whether they arrived from an earlier build or by hand, the
+        // first run has nothing left to do and must not keep trying.
+        let claude = scratch("already-claude");
+        let config = scratch_config("already-config");
+        install(&claude).expect("someone else put them there");
+
+        assert!(!install_once(&claude, &config).expect("first launch"));
+        assert!(crate::settings::load_from(&config).claude_hooks_installed);
     }
 }
