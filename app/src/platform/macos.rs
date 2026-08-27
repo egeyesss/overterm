@@ -21,7 +21,7 @@
 //! point hops there through Tauri's event loop rather than trusting the
 //! caller.
 
-use objc2_app_kit::{NSFloatingWindowLevel, NSWindow, NSWindowCollectionBehavior};
+use objc2_app_kit::{NSApplication, NSFloatingWindowLevel, NSWindow, NSWindowCollectionBehavior};
 use tauri::{Runtime, WebviewWindow};
 
 /// Borrow the window's AppKit object.
@@ -84,5 +84,30 @@ pub fn show_without_focus<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), S
         // Raises the window even though this app is not active, and unlike
         // makeKeyAndOrderFront it leaves keyboard focus where it is.
         ns.orderFrontRegardless();
+    })
+}
+
+/// Read back what the window and the app actually ended up with.
+///
+/// Behind `OVERTERM_WINDOW_DEBUG`. Every one of these values was set
+/// deliberately somewhere above, and reading them back is still the only
+/// way to find out which of them macOS honoured.
+pub fn report_state<R: Runtime>(
+    window: &WebviewWindow<R>,
+    when: &'static str,
+) -> Result<(), String> {
+    with_window(window, "report state", move |ns| {
+        let mtm = objc2_foundation::MainThreadMarker::new()
+            .expect("with_window already hopped to the main thread");
+        let app = NSApplication::sharedApplication(mtm);
+        eprintln!(
+            "[platform] {when}: level={} behavior={:?} policy={:?} visible={} onActiveSpace={} keyWindow={}",
+            ns.level(),
+            ns.collectionBehavior(),
+            app.activationPolicy(),
+            ns.isVisible(),
+            ns.isOnActiveSpace(),
+            ns.isKeyWindow(),
+        );
     })
 }

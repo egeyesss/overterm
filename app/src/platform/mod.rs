@@ -52,5 +52,13 @@ pub fn make_overlay<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String>
     window.stay_visible_when_inactive()?;
     window.set_floating()?;
     window.join_all_spaces()?;
+    // Set OVERTERM_WINDOW_DEBUG to have the window report what it
+    // actually ended up with. Worth keeping: the flags that let a window
+    // sit over another app's full-screen Space were found by reading
+    // this back rather than by reasoning about what had been set.
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("OVERTERM_WINDOW_DEBUG").is_some() {
+        imp::report_state(window, "after setup")?;
+    }
     Ok(())
 }
