@@ -21,7 +21,7 @@
 //! point hops there through Tauri's event loop rather than trusting the
 //! caller.
 
-use objc2_app_kit::{NSApplication, NSFloatingWindowLevel, NSWindow, NSWindowCollectionBehavior};
+use objc2_app_kit::{NSApplication, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
 use tauri::{ActivationPolicy, App, Runtime, WebviewWindow};
 
 /// Borrow the window's AppKit object.
@@ -54,7 +54,18 @@ where
 
 pub fn set_floating<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     with_window(window, "floating level", |ns| {
-        ns.setLevel(NSFloatingWindowLevel);
+        // Status level, which is 25. The floating level this started on
+        // is 3, high enough to sit above ordinary windows and no higher.
+        // A full-screen app composites above the menu bar at level 24, so
+        // everything under that is behind a full-screen video and the
+        // overlay may as well not be there. Watching something while an
+        // agent works is exactly when a terminal that stays out of the
+        // way earns its keep.
+        //
+        // One step above the menu bar and no further. The levels past
+        // this one cover system alerts and password prompts, which is not
+        // ours to do.
+        ns.setLevel(NSStatusWindowLevel);
     })
 }
 
@@ -70,11 +81,23 @@ pub fn stay_visible_when_inactive<R: Runtime>(window: &WebviewWindow<R>) -> Resu
 pub fn join_all_spaces<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     with_window(window, "join all spaces", |ns| {
         ns.setCollectionBehavior(
-            // On every Space, without dragging the user's Space along when
-            // they switch, and allowed to sit over full-screen apps.
+            // On every Space, without dragging the user's Space along
+            // when they switch.
             NSWindowCollectionBehavior::CanJoinAllSpaces
                 | NSWindowCollectionBehavior::Stationary
-                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                // These two are the ones that matter for sitting over
+                // somebody else's full-screen app, and they are easy to
+                // miss because every older answer names the three above.
+                // CanJoinAllSpaces puts the window on every ordinary
+                // Space and stops at a full-screen one, which measured as
+                // isOnActiveSpace being false the whole time a video was
+                // playing. Auxiliary plus CanJoinAllApplications is what
+                // lets a window join a Space another application owns.
+                // Both arrived in macOS 13; on anything older they are
+                // inert bits and the window behaves as it did before.
+                | NSWindowCollectionBehavior::Auxiliary
+                | NSWindowCollectionBehavior::CanJoinAllApplications,
         );
     })
 }
