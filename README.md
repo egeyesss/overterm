@@ -26,6 +26,23 @@ Free, open source, tool-agnostic, with a portable core.
 - Floats above other windows on every Space, including over full-screen apps
 - `Cmd+Shift+O` from anywhere summons or hides it
 
+## Install
+
+```sh
+brew install --cask --no-quarantine egeyesss/overterm/overterm
+```
+
+The app is not signed with an Apple Developer certificate yet, so macOS
+refuses to open it and reports that the developer cannot be verified.
+`--no-quarantine` tells Homebrew to skip attaching the attribute that
+triggers that check. Signing will remove the need for the flag.
+
+Uninstalling takes the Claude Code entries below with it:
+
+```sh
+brew uninstall --cask overterm
+```
+
 ## Claude Code
 
 Detection works on any CLI with nothing installed, by reading the terminal.

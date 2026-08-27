@@ -1,0 +1,36 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    # macOS because the app crate builds against AppKit, and because the
+    # session tests spawn real shells in real PTYs rather than mocking
+    # them, so they should run where the app runs.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      # Roughly 400 crates come in through Tauri, so a cold build is slow
+      # enough to discourage anyone from waiting for the result.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The frontend is not built here on purpose: nothing under test
+      # needs it, and leaving it out keeps the run to one toolchain.
+      - name: Tests
+        run: cargo test --workspace
