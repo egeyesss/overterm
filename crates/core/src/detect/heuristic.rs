@@ -172,6 +172,16 @@ impl HeuristicAdapter {
         })
     }
 
+    /// Whether the cursor is parked on a row with nothing on it.
+    ///
+    /// A command running silently leaves it on the blank line under the
+    /// one it echoed. Anything waiting for an answer has drawn something
+    /// there to answer, and rests the cursor on that.
+    fn cursor_row_is_empty(&self) -> bool {
+        let (row, _) = self.parser.screen().cursor_position();
+        self.row_text(row).trim().is_empty()
+    }
+
     fn busy_hint_on_screen(&self) -> bool {
         let (rows, _) = self.parser.screen().size();
         let first = rows.saturating_sub(self.cfg.busy_scan_rows);
@@ -283,6 +293,25 @@ impl Adapter for HeuristicAdapter {
         if self.busy_hint_on_screen() {
             return true;
         }
+        // A command running silently leaves the cursor on the blank line
+        // under the one it echoed, and that is the whole tell. `sleep 5`
+        // prints nothing ever, so waiting for output before believing
+        // work is happening means the quiet half of what people run can
+        // never get the terminal out of the way.
+        //
+        // Anything waiting on the user has drawn something to answer and
+        // rests the cursor on it, which is why the row has to be blank
+        // rather than merely not a prompt. Claude's folder-trust question
+        // is the case that proves it: it comes up on the ordinary screen,
+        // before the alternate screen is ever taken, with the cursor
+        // sitting on the option it wants chosen.
+        //
+        // Inside a full-screen program none of this reasoning holds. It
+        // paints wherever it likes and parks the cursor wherever it
+        // likes, so there it takes evidence.
+        if !self.alternate_screen && self.cursor_row_is_empty() && !self.prompt_at_cursor() {
+            return true;
+        }
         // Otherwise the screen has to still be changing. A dialog waiting
         // for an answer paints once and then goes still, while work that
         // produces output keeps repainting.
@@ -309,10 +338,16 @@ mod tests {
         // A program that printed a question and is waiting for an answer.
         // The state machine still says Busy, but there is no evidence of
         // work, so the window must not hide the question.
+        //
+        // Shaped the way claude's folder-trust question really arrives:
+        // on the ordinary screen, before the alternate screen is taken,
+        // with the cursor resting on the option rather than on a blank
+        // line below it. That resting place is the whole difference
+        // between this and a command running silently.
         let base = Instant::now();
         let mut a = adapter();
         a.feed(
-            b"Do you trust the files in this folder?\r\n  1. Yes\r\n",
+            "Do you trust the files in this folder?\r\n❯ 1. Yes".as_bytes(),
             at(base, 0),
         );
         assert!(a.is_working(at(base, 100)));
@@ -341,6 +376,49 @@ mod tests {
         let base = Instant::now();
         let mut a = adapter();
         assert!(a.feed(b"$ ls\r\nfile\r\n$ ", at(base, 0)).is_empty());
+    }
+
+    #[test]
+    fn a_silent_command_on_the_ordinary_screen_counts_as_working() {
+        // `sleep 5` prints nothing at all. Waiting for output before
+        // believing work is happening means the terminal can never get
+        // out of the way for the quiet half of what people run.
+        let base = Instant::now();
+        let mut a = adapter();
+        a.feed(b"sh-3.2$ sleep 5\r\n", at(base, 0));
+        assert!(a.is_working(at(base, 100)));
+        assert!(a.is_working(at(base, 3_000)), "gave up while sleep ran");
+
+        // The prompt coming back is what ends it.
+        a.feed(b"sh-3.2$ ", at(base, 5_000));
+        assert!(!a.is_working(at(base, 5_600)));
+    }
+
+    #[test]
+    fn a_shell_waiting_for_a_command_is_not_working() {
+        let base = Instant::now();
+        let mut a = adapter();
+        a.feed(b"sh-3.2$ ", at(base, 0));
+        assert!(!a.is_working(at(base, 600)));
+    }
+
+    #[test]
+    fn a_full_screen_program_is_not_judged_by_its_cursor() {
+        // A program that owns the screen paints where it likes and parks
+        // the cursor where it likes, so a blank row under it means
+        // nothing. An editor sitting open on an empty buffer must not
+        // read as work and get hidden.
+        let base = Instant::now();
+        let mut a = adapter();
+        a.feed(b"\x1b[?1049h", at(base, 0));
+        a.feed(b"\x1b[H", at(base, 100));
+        assert!(!a.is_working(at(base, 3_000)));
+
+        // Once it hands the screen back, the ordinary rules return for
+        // whatever runs next.
+        a.feed(b"\x1b[?1049l", at(base, 4_000));
+        a.feed(b"sh-3.2$ sleep 5\r\n", at(base, 4_100));
+        assert!(a.is_working(at(base, 7_000)));
     }
 
     #[test]

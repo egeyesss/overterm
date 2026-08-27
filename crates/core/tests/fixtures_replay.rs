@@ -391,3 +391,51 @@ fn an_interrupted_turn_does_not_hold_the_session_busy() {
         "concluded by something else: {done:?}"
     );
 }
+
+#[test]
+fn a_silent_command_reads_as_working_for_as_long_as_it_runs() {
+    // `sleep 2` prints nothing between the echoed command and the prompt
+    // coming back. Nothing on screen moves, so waiting for output before
+    // believing work is happening leaves the terminal in the way for the
+    // whole of it, and the window never gets to collapse at all.
+    // Sampled from 3300ms because the submit at 2200ms was typed, and
+    // for a second after a keystroke the terminal belongs to the user
+    // whatever else is going on. The collapse asks at 1500ms and again
+    // at 2000ms, both after that, so the grace never blocks it.
+    let during: Vec<(u64, bool)> = working_over_time("zsh-sleep.ndjson")
+        .into_iter()
+        .filter(|(t, _)| (3_300..4_100).contains(t))
+        .collect();
+    assert!(!during.is_empty(), "no samples while sleep ran");
+    assert!(
+        during.iter().all(|&(_, working)| working),
+        "gave up partway through a running command: {during:?}"
+    );
+
+    // And it stops the moment the prompt comes back, or the window would
+    // never come out of the bar again.
+    let after: Vec<(u64, bool)> = working_over_time("zsh-sleep.ndjson")
+        .into_iter()
+        .filter(|(t, _)| (5_000..5_400).contains(t))
+        .collect();
+    assert!(
+        after.iter().all(|&(_, working)| !working),
+        "still called it work after the prompt returned: {after:?}"
+    );
+}
+
+#[test]
+fn the_shell_claude_leaves_behind_can_hide_the_terminal_too() {
+    // The same thing, in the shell after claude exits: the `sleep 2` at
+    // the end of that recording has to read as work, or handing back
+    // detection is only half the job.
+    let during: Vec<(u64, bool)> = working_over_time(HOOKED)
+        .into_iter()
+        .filter(|(t, _)| (57_200..57_900).contains(t))
+        .collect();
+    assert!(!during.is_empty(), "no samples while the sleep ran");
+    assert!(
+        during.iter().all(|&(_, working)| working),
+        "the shell after claude could never hide the terminal: {during:?}"
+    );
+}
