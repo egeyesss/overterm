@@ -229,6 +229,13 @@ fn install_once(claude: &Path, config: &Path) -> Result<bool, String> {
     if settings.claude_hooks_installed {
         return Ok(false);
     }
+    // Plenty of people will never run Claude Code, and creating a config
+    // directory for a tool someone does not have is not ours to do. They
+    // may install it later, so this does not count as the launch that
+    // set the hooks up, and a launch after they do will pick it up.
+    if !claude.parent().is_some_and(Path::exists) {
+        return Ok(false);
+    }
     let changed = install(claude)?;
     settings.claude_hooks_installed = true;
     if let Err(e) = crate::settings::save_to(config, &settings) {
@@ -555,6 +562,32 @@ mod tests {
             !installed(&claude).expect("check"),
             "the app put back what the user removed"
         );
+    }
+
+    #[test]
+    fn nothing_is_created_for_someone_who_does_not_use_claude_code() {
+        // Anyone can download this and run any CLI in it. Conjuring a
+        // config directory for a tool they have never installed, on first
+        // launch, is not something a terminal gets to do.
+        let dir = std::env::temp_dir().join("overterm-hooks-test/no-claude-here");
+        let _ = std::fs::remove_dir_all(&dir);
+        let claude = dir.join("settings.json");
+        let config = scratch_config("no-claude-config");
+
+        assert!(!install_once(&claude, &config).expect("first launch"));
+        assert!(
+            !dir.exists(),
+            "created a directory for a tool that is not there"
+        );
+        assert!(
+            !crate::settings::load_from(&config).claude_hooks_installed,
+            "must stay ready to try again if they install it later"
+        );
+
+        // And when they do install it, a later launch picks it up.
+        std::fs::create_dir_all(&dir).expect("claude gets installed");
+        assert!(install_once(&claude, &config).expect("a later launch"));
+        assert!(installed(&claude).expect("check"));
     }
 
     #[test]
