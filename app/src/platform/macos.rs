@@ -22,7 +22,7 @@
 //! caller.
 
 use objc2_app_kit::{NSApplication, NSFloatingWindowLevel, NSWindow, NSWindowCollectionBehavior};
-use tauri::{Runtime, WebviewWindow};
+use tauri::{ActivationPolicy, App, Runtime, WebviewWindow};
 
 /// Borrow the window's AppKit object.
 ///
@@ -110,4 +110,19 @@ pub fn report_state<R: Runtime>(
             ns.isKeyWindow(),
         );
     })
+}
+
+/// Become an accessory app: no Dock icon, no menu bar of its own.
+///
+/// This is what actually lets the window sit over another app's
+/// full-screen space. An ordinary app owns a Space, and macOS will switch
+/// to that Space rather than draw the window on the one in front, however
+/// high the window level is and whatever its collection behaviour says.
+/// An accessory app owns no Space, so its windows are drawn onto whatever
+/// is already there.
+///
+/// It is also how every comparable overlay works, and it settles the
+/// leftover where clicking the terminal made this the frontmost app.
+pub fn make_accessory<R: Runtime>(app: &mut App<R>) {
+    app.set_activation_policy(ActivationPolicy::Accessory);
 }

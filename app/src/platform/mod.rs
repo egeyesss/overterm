@@ -4,7 +4,7 @@
 //! the app talks to `PlatformWindow` only, so porting to Windows or Linux
 //! means writing one more implementation and changing nothing else.
 
-use tauri::{Runtime, WebviewWindow};
+use tauri::{App, Runtime, WebviewWindow};
 
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(not(target_os = "macos"), path = "fallback.rs")]
@@ -44,6 +44,14 @@ impl<R: Runtime> PlatformWindow for WebviewWindow<R> {
     fn show_without_focus(&self) -> Result<(), String> {
         imp::show_without_focus(self)
     }
+}
+
+/// Tell the OS this is an overlay rather than an ordinary app.
+///
+/// Separate from the window calls because it is a property of the
+/// application, and it has to happen before any window is shown.
+pub fn make_accessory<R: Runtime>(app: &mut App<R>) {
+    imp::make_accessory(app);
 }
 
 /// Apply the full overlay treatment. Call once during setup, on the main
