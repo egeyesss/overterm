@@ -207,6 +207,11 @@ barInput.addEventListener('keydown', (event) => {
     else return;
   } else if (event.key === 'Enter') {
     write('\r');
+  } else if (event.key === 'Escape') {
+    // How you interrupt Claude Code, and the bar is exactly where you
+    // are when you want to. It changes no text, so the draft mirror
+    // above is left alone.
+    write('\x1b');
   } else if (event.key === 'Backspace') {
     write('\x7f');
   } else if (event.key.length === 1) {
