@@ -38,10 +38,10 @@ Claude Code turns that into an escape sequence in the terminal, and OverTerm
 reads it back out of the session it arrived on. Nothing listens on a port,
 there is no secret to handle, and it still works over SSH.
 
-The entries merge into whatever hooks you already have, and running the app
-again leaves one copy of each. To remove them, delete the four entries whose
-command mentions `overterm` from that file. Detection falls back to reading
-the terminal, which is what every other CLI gets.
+The entries merge into whatever hooks you already have, and they go in once.
+To remove them, delete the four entries whose command mentions `overterm`
+from that file. OverTerm will not put them back. Detection falls back to
+reading the terminal, which is what every other CLI gets.
 
 ## Stack
 
