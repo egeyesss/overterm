@@ -29,13 +29,18 @@ Free, open source, tool-agnostic, with a portable core.
 ## Install
 
 ```sh
-brew install --cask --no-quarantine egeyesss/overterm/overterm
+brew install --cask egeyesss/overterm/overterm
+xattr -dr com.apple.quarantine /Applications/OverTerm.app
 ```
 
-The app is not signed with an Apple Developer certificate yet, so macOS
-refuses to open it and reports that the developer cannot be verified.
-`--no-quarantine` tells Homebrew to skip attaching the attribute that
-triggers that check. Signing will remove the need for the flag.
+The second line is needed because the app is not signed with an Apple
+Developer certificate yet. Homebrew marks anything it downloads as
+quarantined, and macOS refuses to open a quarantined app it cannot verify,
+reporting that the developer could not be checked for malware. Removing
+that mark is what lets it open. On macOS 15 and later, opening it from the
+right-click menu no longer works as a way around this.
+
+Signing will remove the need for the second line entirely.
 
 Uninstalling takes the Claude Code entries below with it:
 
