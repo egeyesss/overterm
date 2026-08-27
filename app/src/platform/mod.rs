@@ -22,6 +22,10 @@ pub trait PlatformWindow {
     /// Stay visible on every Space, including other apps' full-screen ones.
     fn join_all_spaces(&self) -> Result<(), String>;
 
+    /// Whether the window is on the Space the user is looking at. A
+    /// window can be visible and still be somewhere the user cannot see.
+    fn is_on_active_space(&self) -> bool;
+
     /// Bring the window forward without taking keyboard focus. This is what
     /// an agent finishing its work triggers, so it must never steal a
     /// keystroke from whatever the user is typing in.
@@ -39,6 +43,10 @@ impl<R: Runtime> PlatformWindow for WebviewWindow<R> {
 
     fn join_all_spaces(&self) -> Result<(), String> {
         imp::join_all_spaces(self)
+    }
+
+    fn is_on_active_space(&self) -> bool {
+        imp::is_on_active_space(self)
     }
 
     fn show_without_focus(&self) -> Result<(), String> {

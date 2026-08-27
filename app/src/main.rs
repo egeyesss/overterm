@@ -12,6 +12,7 @@ use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 use choreograph::Choreographer;
+use platform::PlatformWindow;
 
 pub const MAIN_WINDOW: &str = "main";
 
@@ -101,8 +102,12 @@ fn main() {
 /// The hotkey is a deliberate summon, so taking focus here is wanted; the
 /// agent-driven expand in the choreography is what must not.
 fn toggle_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
-    let visible = window.is_visible().unwrap_or(false);
-    let result = if visible {
+    // Visible is not the same as reachable. A window sitting on another
+    // Space reports itself visible, so keying the toggle off that alone
+    // meant the first press hid a window the user could not see and was
+    // asking for.
+    let showing = window.is_visible().unwrap_or(false) && window.is_on_active_space();
+    let result = if showing {
         window.hide()
     } else {
         window.show().and_then(|()| window.set_focus())

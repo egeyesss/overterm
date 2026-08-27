@@ -137,15 +137,24 @@ pub fn report_state<R: Runtime>(
 
 /// Become an accessory app: no Dock icon, no menu bar of its own.
 ///
-/// This is what actually lets the window sit over another app's
-/// full-screen space. An ordinary app owns a Space, and macOS will switch
-/// to that Space rather than draw the window on the one in front, however
-/// high the window level is and whatever its collection behaviour says.
-/// An accessory app owns no Space, so its windows are drawn onto whatever
-/// is already there.
+/// Which is what a hotkey-summoned window that lives on top of other
+/// things wants to be, and how every comparable overlay ships. It also
+/// settles the leftover where clicking the terminal made this the
+/// frontmost app.
 ///
-/// It is also how every comparable overlay works, and it settles the
-/// leftover where clicking the terminal made this the frontmost app.
+/// It is not what makes the window appear over another application's
+/// full-screen space; the collection behaviour above does that. This was
+/// added while looking for the cause and kept on its own merits.
 pub fn make_accessory<R: Runtime>(app: &mut App<R>) {
     app.set_activation_policy(ActivationPolicy::Accessory);
+}
+
+/// Whether the window is on the Space the user is looking at.
+pub fn is_on_active_space<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    // Reading this has to happen on the main thread, and the callers are
+    // already there: the hotkey handler runs on the event loop.
+    match unsafe { ns_window(window) } {
+        Ok(ns) => ns.isOnActiveSpace(),
+        Err(_) => true,
+    }
 }
