@@ -3,6 +3,13 @@ import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { openUrl } from '@tauri-apps/plugin-opener';
+// Raw so the markup can go straight into a tab. These are each a single
+// <svg> with a viewBox and no fixed size, so CSS decides how big it is.
+import claudeMark from './brand/claude.svg?raw';
+import codexMark from './brand/codex.svg?raw';
+import geminiMark from './brand/gemini.svg?raw';
+import kimiMark from './brand/kimi.svg?raw';
+import ollamaMark from './brand/ollama.svg?raw';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -848,13 +855,17 @@ const TAB_LABEL_MAX = 5;
 /// the backend matched. Keyed on that rather than the label, so renaming
 /// an agent in the settings file does not cost it its icon.
 ///
-/// Each one carries its own colours, because a brand mark is not always
-/// one flat colour. An agent added through the settings file has no entry
-/// here and falls back to a glyph and a colour, which is why both of
-/// those exist.
+/// Loaded from the files in ./brand rather than pasted in as strings, so
+/// swapping one is dropping a file in. Each carries its own colours,
+/// because a brand mark is not always one flat colour. An agent added
+/// through the settings file has no entry here and falls back to a glyph
+/// and a colour, which is why both of those exist.
 const MARKS: Record<string, string> = {
-  claude: '""" + claude + """',
-  gemini: '""" + gemini + """',
+  claude: claudeMark,
+  gemini: geminiMark,
+  codex: codexMark,
+  kimi: kimiMark,
+  ollama: ollamaMark,
 };
 
 function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null }) {

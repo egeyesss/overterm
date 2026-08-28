@@ -135,6 +135,8 @@ const BUILTIN_AGENTS: &[(&str, &str, &str, Option<&str>)] = &[
     ("codex", "Codex", "#10a37f", None),
     ("aider", "Aider", "#14b8a6", None),
     ("opencode", "opencode", "#f59e0b", None),
+    ("kimi", "Kimi", "#1f1f1f", None),
+    ("ollama", "Ollama", "#c8c8c8", None),
 ];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the

@@ -121,6 +121,12 @@ body.attention-needs::after {
   max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
+  /* Belt and braces with the trimming the script does. A name that gets
+     through untrimmed is cut at the edge with an ellipsis rather than
+     spilling out of both sides of the box, which is what it did when the
+     mark for an agent failed to load and it fell back to the name. */
+  text-overflow: ellipsis;
+  text-align: center;
 }
 
 /* One glyph has room to be bigger than a word does. */
@@ -132,21 +138,19 @@ body.attention-needs::after {
   justify-content: center;
 }
 
-/* A drawn mark fills the tab, which is what makes it read as an icon
-   rather than as a character that happens to be in the box. */
+/* A mark fills the tab, which is what makes it read as an icon rather
+   than as a character that happens to be in the box. The files size
+   themselves in em, so the size is set here and not in the markup. */
 .tab .label svg {
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
   display: block;
+  opacity: 0.9;
 }
 
 .tab.active .label svg,
 .tab:hover .label svg {
   opacity: 1;
-}
-
-.tab .label svg {
-  opacity: 0.85;
 }
 
 .tab:hover {
