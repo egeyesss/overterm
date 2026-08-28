@@ -32,6 +32,7 @@ type Settings = {
   claude_hooks_installed: boolean;
   claude_hooks_notice_seen: boolean;
   opacity: number;
+  hotkey: string;
   window: {
     collapse_on_submit: boolean;
     collapse_delay_ms: number;
@@ -370,6 +371,8 @@ const revealStalled = field<HTMLInputElement>('reveal-stalled');
 const cueGlow = field<HTMLInputElement>('cue-glow');
 const cueSound = field<HTMLInputElement>('cue-sound');
 const cueNotify = field<HTMLInputElement>('cue-notify');
+const hotkey = field<HTMLInputElement>('hotkey');
+const hotkeyNote = field<HTMLElement>('hotkey-note');
 const claudeHooks = field<HTMLInputElement>('claude-hooks');
 const hooksNote = field<HTMLElement>('hooks-note');
 const fontFamily = field<HTMLInputElement>('font-family');
@@ -387,6 +390,7 @@ function showSettings(current: Settings) {
   cueGlow.checked = current.cues.glow;
   cueSound.checked = current.cues.sound;
   cueNotify.checked = current.cues.notify;
+  hotkey.value = current.hotkey;
   fontFamily.value = current.terminal.font_family;
   fontSize.value = String(current.terminal.font_size);
   scrollback.value = String(current.terminal.scrollback);
@@ -461,6 +465,65 @@ for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound, cueN
 for (const input of [collapseDelay, revealStalled, fontSize, scrollback, fontFamily]) {
   input.addEventListener('change', saveSettings);
 }
+
+/// Modifier names in the order the shortcut parser writes them.
+const MODIFIERS = [
+  ['metaKey', 'CmdOrCtrl'],
+  ['ctrlKey', 'Control'],
+  ['altKey', 'Alt'],
+  ['shiftKey', 'Shift'],
+] as const;
+
+/// Build a chord from a keypress, or null while only modifiers are held.
+///
+/// Held modifiers arrive as their own keydown events, so the box shows
+/// them building up and only commits once a real key lands.
+function chordFrom(event: KeyboardEvent): { chord: string; complete: boolean } {
+  const parts: string[] = [];
+  for (const [flag, name] of MODIFIERS) {
+    if (event[flag]) parts.push(name);
+  }
+  const key = event.key;
+  const isModifier = ['Meta', 'Control', 'Alt', 'Shift'].includes(key);
+  if (isModifier) return { chord: parts.join('+'), complete: false };
+  const named = key.length === 1 ? key.toUpperCase() : key;
+  return { chord: [...parts, named].join('+'), complete: parts.length > 0 };
+}
+
+hotkey.addEventListener('keydown', (event) => {
+  event.preventDefault();
+  const { chord, complete } = chordFrom(event);
+  hotkey.value = chord;
+  if (!complete) {
+    hotkeyNote.classList.remove('failed');
+    hotkeyNote.textContent = chord ? 'Now press a key.' : 'Hold a modifier first.';
+    return;
+  }
+  invoke<string>('set_hotkey', { hotkey: chord })
+    .then((stored) => {
+      hotkey.value = stored;
+      hotkeyNote.classList.remove('failed');
+      hotkeyNote.textContent = 'Saved.';
+      if (settings) settings = { ...settings, hotkey: stored };
+    })
+    .catch((err) => {
+      hotkeyNote.textContent = String(err);
+      hotkeyNote.classList.add('failed');
+      // Put the working chord back, so the box never shows one that is
+      // not actually registered.
+      if (settings) hotkey.value = settings.hotkey;
+    });
+});
+
+hotkey.addEventListener('focus', () => {
+  hotkeyNote.classList.remove('failed');
+  hotkeyNote.textContent = 'Press the chord you want.';
+});
+
+hotkey.addEventListener('blur', () => {
+  hotkeyNote.textContent = '';
+  if (settings) hotkey.value = settings.hotkey;
+});
 
 /// Ask whether our entries are in Claude Code's settings file, and say
 /// what turning this off and on actually does to it.

@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 use overterm_core::choreo::{ChoreoConfig, Cues};
 use serde::{Deserialize, Serialize};
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{AppHandle, Runtime, State, WebviewWindow};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 use crate::choreograph::Choreographer;
 use crate::platform::PlatformWindow;
@@ -21,6 +22,9 @@ use crate::platform::PlatformWindow;
 /// so it would be a window nobody can see and nobody can get rid of.
 pub const MIN_OPACITY: u8 = 10;
 pub const MAX_OPACITY: u8 = 100;
+
+/// The summon chord a fresh install gets.
+pub const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Shift+O";
 
 // Not Copy: the terminal font is a String. Everything is cloned or moved
 // explicitly instead, which is no hardship for a struct read once a save.
@@ -49,6 +53,9 @@ pub struct Settings {
 
     /// How see-through the window is, as a percentage.
     pub opacity: u8,
+
+    /// Chord that summons or hides the window from any application.
+    pub hotkey: String,
 
     // Tables have to come after the plain values above: TOML puts every
     // key before the first section header, so a scalar declared after a
@@ -140,6 +147,7 @@ impl Default for Settings {
             // for it; nobody should have to work out why their terminal
             // arrived faded.
             opacity: MAX_OPACITY,
+            hotkey: DEFAULT_HOTKEY.into(),
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
@@ -170,6 +178,34 @@ impl Settings {
             },
         }
     }
+}
+
+/// Read a chord, refusing the ones that would make the machine unusable.
+///
+/// A chord with no modifier registers globally and then swallows that key
+/// in every other application, so a settings file saying `hotkey = "o"`
+/// would cost somebody the letter o until they worked out why.
+pub fn parse_hotkey(chord: &str) -> Result<Shortcut, String> {
+    let shortcut: Shortcut = chord
+        .parse()
+        .map_err(|_| format!("{chord} is not a chord this build understands"))?;
+    if shortcut.mods.is_empty() {
+        return Err(format!(
+            "{chord} has no modifier, so it would swallow that key everywhere"
+        ));
+    }
+    Ok(shortcut)
+}
+
+/// The stored chord, or the default if what is stored cannot be used.
+///
+/// Never fails: a settings file with nonsense in it should cost the user
+/// their chosen shortcut, not the ability to start the app.
+pub fn hotkey_or_default(chord: &str) -> Shortcut {
+    parse_hotkey(chord).unwrap_or_else(|e| {
+        eprintln!("[settings] {e}; using {DEFAULT_HOTKEY}");
+        parse_hotkey(DEFAULT_HOTKEY).expect("the built-in default parses")
+    })
 }
 
 /// Where the settings file lives.
@@ -238,6 +274,33 @@ pub fn dismiss_hooks_notice() -> Result<(), String> {
     save_to(&path, &settings)
 }
 
+/// Take a new summon chord, or explain why it cannot be used.
+///
+/// The old one is released first. Registering the new one can still fail
+/// because another application already holds it, and in that case the old
+/// chord is put back rather than leaving the window with no way to be
+/// summoned at all.
+#[tauri::command]
+pub fn set_hotkey<R: Runtime>(app: AppHandle<R>, hotkey: String) -> Result<String, String> {
+    let wanted = parse_hotkey(&hotkey)?;
+    let mut settings = load();
+    let previous = hotkey_or_default(&settings.hotkey);
+
+    let shortcuts = app.global_shortcut();
+    let _ = shortcuts.unregister(previous);
+    if let Err(e) = shortcuts.register(wanted) {
+        let _ = shortcuts.register(previous);
+        return Err(format!(
+            "{hotkey} could not be registered ({e}). Another application is probably holding it."
+        ));
+    }
+
+    settings.hotkey = hotkey;
+    let path = path().ok_or("no home directory to store settings in")?;
+    save_to(&path, &settings)?;
+    Ok(settings.hotkey)
+}
+
 /// Store new preferences and put them into effect straight away.
 ///
 /// Returns what was actually stored, which is not always what was asked
@@ -257,6 +320,9 @@ pub fn save_settings<R: Runtime>(
         claude_hooks_installed: stored.claude_hooks_installed,
         claude_hooks_notice_seen: stored.claude_hooks_notice_seen,
         opacity,
+        // Changing this has to register with the OS and can fail, so it
+        // goes through set_hotkey and never through a bulk save.
+        hotkey: stored.hotkey,
         ..settings
     };
 
@@ -307,6 +373,7 @@ mod tests {
         let settings = Settings {
             claude_hooks_installed: true,
             claude_hooks_notice_seen: true,
+            hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
             window: WindowSettings {
                 collapse_on_submit: false,
@@ -357,6 +424,28 @@ mod tests {
                 settings.alpha()
             );
         }
+    }
+
+    #[test]
+    fn the_default_chord_is_one_this_build_can_register() {
+        assert!(parse_hotkey(DEFAULT_HOTKEY).is_ok());
+    }
+
+    #[test]
+    fn a_chord_with_no_modifier_is_refused() {
+        // It would register globally and swallow that key in every other
+        // application, which is not a mistake somebody would connect back
+        // to a terminal they configured a week ago.
+        assert!(parse_hotkey("o").is_err());
+        assert!(parse_hotkey("F5").is_err());
+    }
+
+    #[test]
+    fn nonsense_costs_the_shortcut_and_not_the_app() {
+        // Falls back rather than failing: a settings file is editable by
+        // hand, and a typo in it must not stop the app starting.
+        let fallback = hotkey_or_default("not a chord at all");
+        assert_eq!(fallback, parse_hotkey(DEFAULT_HOTKEY).unwrap());
     }
 
     #[test]

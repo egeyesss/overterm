@@ -8,7 +8,7 @@ mod pty;
 mod settings;
 
 use tauri::Manager;
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 
 use choreograph::Choreographer;
 use platform::PlatformWindow;
@@ -35,8 +35,8 @@ fn main() {
         return;
     }
 
-    // Summons or hides the overlay from any app. Configurable later.
-    let toggle = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO);
+    // Summons or hides the overlay from any app.
+    let toggle = settings::hotkey_or_default(&settings::load().hotkey);
 
     tauri::Builder::default()
         .manage(pty::Sessions::default())
@@ -45,8 +45,11 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, shortcut, event| {
-                    if event.state != ShortcutState::Pressed || shortcut != &toggle {
+                .with_handler(move |app, _shortcut, event| {
+                    // Only ever one chord is registered: changing it
+                    // releases the old one first. So anything arriving
+                    // here is the summon key, whatever it currently is.
+                    if event.state != ShortcutState::Pressed {
                         return;
                     }
                     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
@@ -96,6 +99,7 @@ fn main() {
             hooks::uninstall_hooks,
             hooks::hooks_installed,
             settings::dismiss_hooks_notice,
+            settings::set_hotkey,
             settings::settings,
             settings::save_settings,
         ])
