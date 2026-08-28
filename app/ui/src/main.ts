@@ -2,8 +2,10 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
@@ -48,6 +50,15 @@ term.unicode.activeVersion = '11';
 
 const search = new SearchAddon();
 term.loadAddon(search);
+
+// Agents print localhost addresses, pull request links and doc URLs all
+// day. The handler is ours because the default one calls window.open,
+// which in a webview navigates the app away from itself.
+term.loadAddon(
+  new WebLinksAddon((_event, uri) => {
+    openUrl(uri).catch(() => {});
+  }),
+);
 
 const container = document.getElementById('terminal')!;
 term.open(container);
