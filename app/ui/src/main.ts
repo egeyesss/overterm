@@ -2,6 +2,8 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
 
@@ -20,6 +22,10 @@ const term = new Terminal({
   fontSize: 13,
   fontFamily: 'Menlo, Monaco, "SF Mono", monospace',
   scrollback: 10_000,
+  // Required by the Unicode 11 addon below, which registers a character
+  // width provider through an API xterm still calls proposed. Without it
+  // loading that addon throws.
+  allowProposedApi: true,
   // Option sends ESC rather than composing accented characters, which is
   // what every agent CLI expects. It is also what gets Option+Enter below,
   // and Claude Code's other Option shortcuts, working at all.
@@ -33,8 +39,28 @@ const term = new Terminal({
 const fit = new FitAddon();
 term.loadAddon(fit);
 
+// Agents draw box-drawing characters and emoji, both of which are two
+// cells wide under Unicode 11 and one cell wide under the default table.
+// Getting this wrong shears a TUI sideways by a column per glyph.
+term.loadAddon(new Unicode11Addon());
+term.unicode.activeVersion = '11';
+
 const container = document.getElementById('terminal')!;
 term.open(container);
+
+// Agent output arrives in bursts large enough to make the DOM renderer
+// stutter. The GPU one keeps up, but its context can be taken away when
+// the machine is under memory pressure, and an addon that has lost its
+// context renders nothing at all. Dropping it falls back to the renderer
+// that was there before.
+try {
+  const webgl = new WebglAddon();
+  webgl.onContextLoss(() => webgl.dispose());
+  term.loadAddon(webgl);
+} catch {
+  // No WebGL in this webview. The default renderer is correct, just slower.
+}
+
 fit.fit();
 term.focus();
 
