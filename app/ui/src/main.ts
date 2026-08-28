@@ -20,6 +20,10 @@ const term = new Terminal({
   fontSize: 13,
   fontFamily: 'Menlo, Monaco, "SF Mono", monospace',
   scrollback: 10_000,
+  // Option sends ESC rather than composing accented characters, which is
+  // what every agent CLI expects. It is also what gets Option+Enter below,
+  // and Claude Code's other Option shortcuts, working at all.
+  macOptionIsMeta: true,
   theme: {
     background: '#1a1b26',
     foreground: '#c0caf5',
@@ -98,7 +102,7 @@ function applyMode(next: WindowMode) {
     // before xterm can lay anything out.
     requestAnimationFrame(() => fit.fit());
   } else {
-    barInput.value = pending;
+    showDraft();
   }
   // Keep typing flowing across an automatic switch, but only when the
   // window already had focus, so nothing is taken from the app the user
@@ -165,6 +169,16 @@ for (const clear of ['click', 'keydown'] as const) {
 
 // --- session ---------------------------------------------------------
 
+/// What a terminal has to send so an agent CLI inserts a line break
+/// instead of submitting.
+///
+/// Enter and Shift+Enter are the same byte in a plain terminal, so a CLI
+/// cannot tell them apart unless the terminal says so. ESC followed by a
+/// carriage return is the sequence Claude Code accepts for this, and the
+/// one its own editor integrations are configured to send. Option+Enter
+/// arrives here too, because `macOptionIsMeta` prefixes ESC.
+const NEWLINE = '\x1b\r';
+
 /// Best-effort mirror of what the user has typed since the last submit.
 ///
 /// The real buffer belongs to whatever is running in the PTY and cannot be
@@ -180,20 +194,35 @@ function write(data: string) {
 }
 
 function track(data: string) {
+  // A line break grows the draft. Checked before the escape guard below,
+  // which would otherwise drop it for starting with ESC.
+  if (data === NEWLINE) {
+    pending += '\n';
+    showDraft();
+    return;
+  }
   // Arrow keys, history recall and the like move a cursor inside the
   // program that this side cannot see. Leave the mirror alone rather than
   // let it drift.
   if (data.startsWith('\x1b')) return;
   for (const ch of data) {
-    if (ch === '\r' || ch === '\n' || ch === '\x03' || ch === '\x15') {
+    if (ch === '\r' || ch === '\x03' || ch === '\x15') {
       pending = '';
+    } else if (ch === '\n') {
+      pending += '\n'; // Ctrl+J, the line break that needs no setup
     } else if (ch === '\x7f' || ch === '\b') {
       pending = pending.slice(0, -1);
     } else if (ch >= ' ') {
       pending += ch;
     }
   }
-  barInput.value = pending;
+  showDraft();
+}
+
+/// The bar is one line tall, so a draft with breaks in it is shown with
+/// them marked rather than flattened away.
+function showDraft() {
+  barInput.value = pending.replace(/\n/g, ' \u21b5 ');
 }
 
 // The bar input forwards keystrokes rather than submitting its contents.
@@ -204,9 +233,13 @@ barInput.addEventListener('keydown', (event) => {
   if (event.ctrlKey) {
     if (event.key === 'c') write('\x03');
     else if (event.key === 'u') write('\x15');
+    // The line break that works in every terminal with no setup, and the
+    // only one that reached the session from here before.
+    else if (event.key === 'j') write('\n');
     else return;
   } else if (event.key === 'Enter') {
-    write('\r');
+    // Same split the full terminal makes: shift means a line break.
+    write(event.shiftKey ? NEWLINE : '\r');
   } else if (event.key === 'Escape') {
     // How you interrupt Claude Code, and the bar is exactly where you
     // are when you want to. It changes no text, so the draft mirror
@@ -245,6 +278,18 @@ async function start() {
     cols: term.cols,
     rows: term.rows,
     onEvent,
+  });
+
+  // xterm.js ignores the modifier on Enter and sends a bare carriage
+  // return, so a shifted one submits. Returning false stops it handling
+  // the key at all, leaving the sequence above as the only thing sent.
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type !== 'keydown') return true;
+    if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      write(NEWLINE);
+      return false;
+    }
+    return true;
   });
 
   term.onData(write);
