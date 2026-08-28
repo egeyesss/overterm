@@ -363,6 +363,8 @@ const expandWhenWanted = field<HTMLInputElement>('expand-when-wanted');
 const revealStalled = field<HTMLInputElement>('reveal-stalled');
 const cueGlow = field<HTMLInputElement>('cue-glow');
 const cueSound = field<HTMLInputElement>('cue-sound');
+const claudeHooks = field<HTMLInputElement>('claude-hooks');
+const hooksNote = field<HTMLElement>('hooks-note');
 const fontFamily = field<HTMLInputElement>('font-family');
 const fontSize = field<HTMLInputElement>('font-size');
 const scrollback = field<HTMLInputElement>('scrollback');
@@ -452,6 +454,41 @@ for (const input of [collapseDelay, revealStalled, fontSize, scrollback, fontFam
   input.addEventListener('change', saveSettings);
 }
 
+/// Ask whether our entries are in Claude Code's settings file, and say
+/// what turning this off and on actually does to it.
+///
+/// Read from that file rather than from our own record of it, because the
+/// user can edit or delete the entries by hand and our record would then
+/// be describing a file that no longer says that.
+function refreshHooks() {
+  invoke<boolean>('hooks_installed')
+    .then((installed) => {
+      claudeHooks.checked = installed;
+      hooksNote.classList.remove('failed');
+      hooksNote.textContent = installed
+        ? 'Four entries in ~/.claude/settings.json let OverTerm read exactly when a turn starts, finishes or asks you something. Turning this off removes them and leaves the rest of that file alone.'
+        : 'Not set up. Detection falls back to reading the terminal, which is what every other tool gets. Turning this on adds four entries to ~/.claude/settings.json.';
+    })
+    .catch((err) => {
+      // No Claude Code on this machine is the usual reason, and it is
+      // not a failure worth alarming anybody about.
+      claudeHooks.checked = false;
+      hooksNote.classList.remove('failed');
+      hooksNote.textContent = `Claude Code settings not readable here (${err}). Detection still works by reading the terminal.`;
+    });
+}
+
+claudeHooks.addEventListener('change', () => {
+  const command = claudeHooks.checked ? 'install_hooks' : 'uninstall_hooks';
+  invoke<boolean>(command)
+    .then(refreshHooks)
+    .catch((err) => {
+      hooksNote.textContent = `Could not change the Claude Code entries: ${err}`;
+      hooksNote.classList.add('failed');
+      refreshHooks();
+    });
+});
+
 function openSettings() {
   if (mode !== 'panel') return; // the sheet has no room in the bar
   // Read on every open rather than trusting the copy in memory, so a
@@ -462,6 +499,7 @@ function openSettings() {
       settingsNote.textContent = `Could not read the settings: ${err}`;
       settingsNote.classList.add('failed');
     });
+  refreshHooks();
   settingsSheet.hidden = false;
 }
 
