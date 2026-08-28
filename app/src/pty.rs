@@ -132,7 +132,24 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<String> {
     // asking the kernel about a process both take longer than any other
     // session should have to wait to report a state change.
     let program = crate::platform::process_name(pid)?;
-    Some(crate::settings::load().label_for(&program))
+    let settings = crate::settings::load();
+
+    // The same lookup answers both questions. Knowing which program owns
+    // the terminal is what lets the fallback detector look for the right
+    // thing on screen, and looking for the wrong thing is worse than
+    // looking for nothing: between batches of output an agent's cursor
+    // rests in its input box, and without a pattern that holds the state
+    // the window decides the turn ended and comes back mid-answer.
+    let profile = settings.profile_for(&program);
+    {
+        let sessions = app.state::<Sessions>();
+        let sessions = sessions.0.lock().unwrap();
+        if let Some(handle) = sessions.get(session_id) {
+            handle.detector.lock().unwrap().set_profile(&profile);
+        }
+    }
+
+    Some(settings.label_for(&program))
 }
 
 /// Report a batch of transitions: the overlay reacts to them, and the

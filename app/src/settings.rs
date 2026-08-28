@@ -8,6 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use overterm_core::choreo::{ChoreoConfig, Cues};
+use overterm_core::detect::Profile;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
@@ -79,6 +81,23 @@ pub struct AgentProfile {
     pub program: String,
     /// What the tab says. Kept short: the rail is narrow.
     pub label: String,
+
+    /// What this program puts on screen for as long as it is working.
+    ///
+    /// The one that matters most. Between batches of output an agent's
+    /// cursor rests in its input box and the screen looks exactly like a
+    /// finished prompt, so without something to hold the state the window
+    /// concludes the turn ended and comes back mid-answer. Claude Code
+    /// shows "esc to interrupt"; Gemini CLI shows "esc to cancel".
+    ///
+    /// Left out means the built-in default, which is what a plain shell
+    /// wants.
+    #[serde(default)]
+    pub busy_pattern: Option<String>,
+
+    /// What a row looks like when this program is waiting for input.
+    #[serde(default)]
+    pub prompt_pattern: Option<String>,
 }
 
 /// The agents that ship with the app.
@@ -86,7 +105,8 @@ pub struct AgentProfile {
 /// Deliberately short. Anything else is two lines in a config file, and
 /// guessing at the process names of tools nobody here has run is how you
 /// end up shipping a mapping that is quietly wrong.
-const BUILTIN_AGENTS: &[(&str, &str)] = &[("claude", "Claude")];
+const BUILTIN_AGENTS: &[(&str, &str, Option<&str>)] =
+    &[("claude", "Claude", Some("esc to interrupt"))];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the
 /// terminal; nothing on this side acts on them.
@@ -198,9 +218,31 @@ impl Settings {
         }
         BUILTIN_AGENTS
             .iter()
-            .find(|(name, _)| *name == program)
-            .map(|(_, label)| (*label).to_string())
+            .find(|(name, ..)| *name == program)
+            .map(|(_, label, _)| (*label).to_string())
             .unwrap_or_else(|| program.to_string())
+    }
+
+    /// The screen patterns to look for while `program` is running.
+    ///
+    /// A program nobody has a profile for gets an empty profile, which
+    /// means the built-in defaults. That is the right answer for a shell
+    /// and a guess for anything else, which is what a profile is for.
+    pub fn profile_for(&self, program: &str) -> Profile {
+        let (busy, prompt) = match self.agents.iter().find(|a| a.program == program) {
+            Some(user) => (user.busy_pattern.as_deref(), user.prompt_pattern.as_deref()),
+            None => (
+                BUILTIN_AGENTS
+                    .iter()
+                    .find(|(name, ..)| *name == program)
+                    .and_then(|(_, _, busy)| *busy),
+                None,
+            ),
+        };
+        Profile {
+            busy_pattern: compile(busy, "busy_pattern", program),
+            prompt_pattern: compile(prompt, "prompt_pattern", program),
+        }
     }
 
     /// The stored preferences as the rules engine wants them.
@@ -244,6 +286,24 @@ pub fn hotkey_or_default(chord: &str) -> Shortcut {
         eprintln!("[settings] {e}; using {DEFAULT_HOTKEY}");
         parse_hotkey(DEFAULT_HOTKEY).expect("the built-in default parses")
     })
+}
+
+/// Compile a pattern from the settings file, reporting a bad one once.
+///
+/// A pattern that does not compile falls back to the default rather than
+/// stopping anything. These come from a file people edit by hand, and a
+/// typo in one should cost that agent its profile, not the session.
+fn compile(pattern: Option<&str>, field: &str, program: &str) -> Option<Regex> {
+    let pattern = pattern?;
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(e) => {
+            eprintln!(
+                "[settings] {program} {field} is not a valid pattern ({e}); using the default"
+            );
+            None
+        }
+    }
 }
 
 /// Where the settings file lives.
@@ -429,6 +489,8 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "kimi".into(),
                 label: "K3".into(),
+                busy_pattern: Some("esc to stop".into()),
+                prompt_pattern: None,
             }],
         };
         save_to(&path, &settings).expect("save");
@@ -486,6 +548,8 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "kimi".into(),
                 label: "K3".into(),
+                busy_pattern: None,
+                prompt_pattern: None,
             }],
             ..Settings::default()
         };
@@ -499,10 +563,66 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "claude".into(),
                 label: "CC".into(),
+                busy_pattern: None,
+                prompt_pattern: None,
             }],
             ..Settings::default()
         };
         assert_eq!(settings.label_for("claude"), "CC");
+    }
+
+    #[test]
+    fn the_built_in_claude_profile_knows_what_it_looks_like_working() {
+        let profile = Settings::default().profile_for("claude");
+        let busy = profile.busy_pattern.expect("claude ships with one");
+        assert!(busy.is_match("  esc to interrupt  "));
+    }
+
+    #[test]
+    fn a_shell_gets_no_patterns_of_its_own() {
+        // Nothing to hold: a shell has no status line saying it is busy,
+        // and claiming otherwise would be worse than saying nothing.
+        let profile = Settings::default().profile_for("zsh");
+        assert!(profile.busy_pattern.is_none());
+        assert!(profile.prompt_pattern.is_none());
+    }
+
+    #[test]
+    fn an_agent_of_your_own_gets_its_pattern_used() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "gemini".into(),
+                label: "Gemini".into(),
+                busy_pattern: Some("esc to cancel".into()),
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        let profile = settings.profile_for("gemini");
+        let busy = profile.busy_pattern.expect("configured");
+        assert!(busy.is_match("Awaiting Further Direction (esc to cancel, 40s)"));
+        assert!(
+            !busy.is_match("esc to interrupt"),
+            "the other agent's wording must not match"
+        );
+    }
+
+    #[test]
+    fn a_pattern_that_does_not_compile_costs_the_profile_and_nothing_else() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "broken".into(),
+                label: "Broken".into(),
+                busy_pattern: Some("(unclosed".into()),
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        // Falls back rather than panicking: these come from a file people
+        // edit by hand, and a typo should cost that agent its profile
+        // rather than the session it is running in.
+        assert!(settings.profile_for("broken").busy_pattern.is_none());
+        assert_eq!(settings.label_for("broken"), "Broken");
     }
 
     #[test]

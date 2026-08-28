@@ -2483,6 +2483,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "overterm-core",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

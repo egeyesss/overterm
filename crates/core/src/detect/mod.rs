@@ -13,6 +13,8 @@ pub mod replay;
 
 use std::time::{Duration, Instant};
 
+use regex::Regex;
+
 /// How long after a keystroke the session still counts as the user's,
 /// not the agent's. Long enough to cover the gap between letters, short
 /// enough that it expires while a submitted job runs.
@@ -121,6 +123,21 @@ fn looks_like_typing(bytes: &[u8]) -> bool {
     bytes.iter().any(|&b| b >= 0x20 && b != 0x7f)
 }
 
+/// What to look for on screen while a particular program is running.
+///
+/// Reading the screen is a guess, and the guess is only as good as what
+/// it is told to look for. Claude Code keeps "esc to interrupt" up for
+/// the whole time it works; another agent says something else, or says
+/// nothing. A field left as `None` means go back to the built-in
+/// default, so leaving a program restores what a plain shell needs.
+#[derive(Clone, Debug, Default)]
+pub struct Profile {
+    /// Marks the screen as still working even though output paused.
+    pub busy_pattern: Option<Regex>,
+    /// Decides whether a row looks like a prompt.
+    pub prompt_pattern: Option<Regex>,
+}
+
 /// A source of signals watching one session's byte streams.
 pub trait Adapter: Send {
     /// Consume a chunk of terminal output.
@@ -130,6 +147,10 @@ pub trait Adapter: Send {
     fn tick(&mut self, now: Instant) -> Vec<Signal>;
     /// The terminal was resized. Adapters that model the screen need this.
     fn resize(&mut self, _cols: u16, _rows: u16) {}
+    /// A different program owns the terminal now, so what is worth
+    /// looking for on screen has changed. Adapters that do not read the
+    /// screen have no use for this.
+    fn set_profile(&mut self, _profile: &Profile) {}
 
     /// Whether there is positive evidence the session is doing work right
     /// now, as opposed to sitting on a question.
@@ -226,6 +247,13 @@ impl Detector {
     }
 
     /// Forward a terminal resize to the adapters.
+    /// Tell every adapter which program owns the terminal now.
+    pub fn set_profile(&mut self, profile: &Profile) {
+        for adapter in &mut self.adapters {
+            adapter.set_profile(profile);
+        }
+    }
+
     pub fn resize(&mut self, cols: u16, rows: u16) {
         for adapter in &mut self.adapters {
             adapter.resize(cols, rows);
