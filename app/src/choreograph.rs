@@ -70,6 +70,12 @@ struct Inner {
 struct Windowing {
     mode: WindowMode,
     state: AgentState,
+    /// Whether the user has handed this session something to do since it
+    /// last reached a conclusion. Attention cues are for answering a
+    /// question somebody asked, and a terminal does things nobody asked
+    /// for: the folder trust prompt Claude Code shows before the user has
+    /// said anything is the case this exists for.
+    user_asked: bool,
     /// Height to restore when expanding, remembered from the last time
     /// the window was expanded so the user's own resizing survives.
     panel_height: f64,
@@ -85,6 +91,7 @@ impl Choreographer {
             state: Mutex::new(Windowing {
                 mode: WindowMode::default(),
                 state: AgentState::Idle,
+                user_asked: false,
                 panel_height: DEFAULT_PANEL_HEIGHT,
             }),
             generation: AtomicU64::new(0),
@@ -180,11 +187,24 @@ impl Choreographer {
     }
 
     fn dispatch<R: Runtime>(&self, app: &AppHandle<R>, event: ChoreoEvent) {
-        if let ChoreoEvent::StateChanged(change) = &event {
-            self.0.state.lock().unwrap().state = change.to;
-        }
+        let user_asked = {
+            let mut windowing = self.0.state.lock().unwrap();
+            match &event {
+                ChoreoEvent::Submitted => windowing.user_asked = true,
+                ChoreoEvent::StateChanged(change) => windowing.state = change.to,
+            }
+            let asked = windowing.user_asked;
+            // Spent on the conclusion it belongs to, so the next thing
+            // the session does on its own is quiet again.
+            if let ChoreoEvent::StateChanged(change) = &event
+                && matches!(change.to, AgentState::Done | AgentState::NeedsInput)
+            {
+                windowing.user_asked = false;
+            }
+            asked
+        };
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        for action in plan(&event, &self.cfg()) {
+        for action in plan(&event, &self.cfg(), user_asked) {
             self.apply(app, action, generation);
         }
     }
