@@ -454,37 +454,48 @@ async function start() {
     onEvent,
   });
 
-  // xterm.js ignores the modifier on Enter and sends a bare carriage
-  // return, so a shifted one submits. Returning false stops it handling
-  // the key at all, leaving the sequence above as the only thing sent.
+  // Keys handled here rather than by the terminal.
+  //
+  // Returning false is not enough on its own. xterm leaves the browser's
+  // default alone when this handler refuses a key, so the keypress event
+  // still fires, and its own keypress path asks this handler again with
+  // an event that is not a keydown. Waving that one through means the
+  // character gets sent after all: a shifted enter sent the line break
+  // and then a bare carriage return, and the carriage return submitted.
+  // Cancelling the keydown stops the keypress happening at all.
+  const handled = (event: KeyboardEvent) => {
+    event.preventDefault();
+    return false;
+  };
+
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
     if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey) {
       write(NEWLINE);
-      return false;
+      return handled(event);
     }
     if (!event.metaKey) return true;
     switch (event.key) {
       case 'f':
         openFind();
-        return false;
+        return handled(event);
       case 'c':
         // Nothing selected means nothing to copy, so let the key through
         // rather than swallow it.
-        return !copySelection();
+        return copySelection() ? handled(event) : true;
       case 'k':
         term.clear();
-        return false;
+        return handled(event);
       case '=':
       case '+':
         zoom(1);
-        return false;
+        return handled(event);
       case '-':
         zoom(-1);
-        return false;
+        return handled(event);
       case '0':
         resetZoom();
-        return false;
+        return handled(event);
       default:
         return true;
     }
