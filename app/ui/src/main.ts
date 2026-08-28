@@ -416,6 +416,19 @@ findBox.querySelector('.find-close')!.addEventListener('click', closeFind);
 
 const settingsSheet = document.getElementById('settings')!;
 const settingsNote = document.getElementById('settings-note')!;
+const versionLine = document.getElementById('version')!;
+
+/// Asked for once. It cannot change while the app is running, and a bug
+/// report is a great deal more useful with it than without.
+invoke<string>('app_version')
+  .then((version) => {
+    versionLine.textContent = `OverTerm ${version}`;
+  })
+  .catch((err) => {
+    // Never swallowed: a version that quietly fails to appear is how
+    // nobody notices this stopped working.
+    console.error('[version] could not read it:', err);
+  });
 
 /// Last known stored settings. The sheet edits a copy of this and sends
 /// the whole thing back, so a field the interface does not show yet is

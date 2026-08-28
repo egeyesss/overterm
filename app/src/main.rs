@@ -101,9 +101,20 @@ fn main() {
             settings::set_hotkey,
             settings::settings,
             settings::save_settings,
+            app_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OverTerm");
+}
+
+/// The version this build reports.
+///
+/// Taken from the crate version, which a release checks against
+/// `tauri.conf.json`, so it is the same number the bundle carries and the
+/// same one somebody reading Info.plist would quote back.
+#[tauri::command]
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 /// Hide the overlay if it is showing, otherwise bring it up ready to type.
