@@ -1,0 +1,42 @@
+name: Bug report
+description: Something else does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        If the window misread what an agent was doing, the other template
+        asks better questions.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >
+        defaults read /Applications/OverTerm.app/Contents/Info.plist CFBundleShortVersionString
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.2"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything it printed
+      description: >
+        Running from source with npm run tauri dev shows messages the
+        bundled app keeps to itself. OVERTERM_WINDOW_DEBUG=1 adds what the
+        window actually ended up with, which is the useful one for anything
+        about floating, focus or full screen.

@@ -1,0 +1,66 @@
+name: The window misread what an agent was doing
+description: It hid while an agent was working, came back mid answer, or never came back
+labels: ["bug", "detection"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the failure that matters most in this project, so thank you
+        for reporting it.
+
+        Detection reads the screen for any tool that is not Claude Code, so
+        the wording a tool leaves on screen while it works is usually the
+        whole answer. A recording is worth more than anything else you can
+        tell me here, and the last field says how to make one.
+
+  - type: input
+    id: agent
+    attributes:
+      label: Which tool was running
+      placeholder: gemini, codex, aider, a plain shell, something else
+    validations:
+      required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What went wrong
+      options:
+        - It collapsed to the bar while the tool was still working
+        - It came back in the middle of an answer
+        - It never came back when the tool finished
+        - It never noticed the tool wanted an answer from me
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: screen
+    attributes:
+      label: What the tool shows on screen while it is working
+      description: >
+        The status line it keeps up for as long as it is busy, copied as
+        exactly as you can. Claude Code shows "esc to interrupt" and Gemini
+        CLI shows "esc to cancel". This one line is often the entire fix.
+      placeholder: "Working... (esc to cancel, 12s)"
+
+  - type: textarea
+    id: recording
+    attributes:
+      label: A recording, if you can
+      description: >
+        Run OverTerm from source with OVERTERM_CAPTURE set, reproduce it,
+        then attach the file it writes.
+
+          OVERTERM_CAPTURE=/tmp/session npm run tauri dev
+
+        Each session writes /tmp/session-<id>.ndjson. It holds everything
+        the terminal printed, so check it for anything you would rather not
+        share before attaching it.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >
+        defaults read /Applications/OverTerm.app/Contents/Info.plist CFBundleShortVersionString

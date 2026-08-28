@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Adding support for an agent
+    url: https://github.com/egeyesss/overterm/blob/main/CONTRIBUTING.md#adding-an-agent
+    about: A tool it does not recognise usually needs two lines of config rather than an issue
+  - name: Porting to Windows or Linux
+    url: https://github.com/egeyesss/overterm/blob/main/PORTING.md
+    about: What a port has to fill in, and what the macOS one learned
