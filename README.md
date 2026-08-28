@@ -29,24 +29,64 @@ Free, open source, tool-agnostic, with a portable core.
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh | sh
+```
+
+That puts the app in `/Applications`. Open it from Finder or Spotlight,
+and `Cmd+Shift+O` summons and hides it from anywhere after that.
+
+Piping a script into a shell is a lot to ask, so if you would rather read
+it first:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh
+less install.sh
+sh install.sh
+```
+
+### What the script gets around
+
+The app is not signed with an Apple Developer certificate. macOS refuses
+to open an unsigned app that carries the `com.apple.quarantine`
+attribute, and says it cannot check the app for malware.
+
+Whatever downloads a file is what sets that attribute. Browsers set it and
+Homebrew sets it. `curl` does not, so an app it downloads is never
+quarantined and opens normally.
+
+This gets around the check rather than passing it. The app is still
+unsigned, so nothing proves the binary you end up running was built from
+the source here. The build that produces it does run as a GitHub Actions
+workflow in this repo, and its log is public, which is as close as an
+unsigned app gets. Signing it properly needs a paid Apple Developer
+account.
+
+The script also checks the download against the checksum published with
+the release. That catches a download that arrived damaged and nothing
+beyond it, because the checksum comes from the same place the app does.
+
+### Homebrew
+
+The cask still works and still needs a second command, because Homebrew
+quarantines what it downloads:
+
+```sh
 brew install --cask egeyesss/overterm/overterm
 xattr -dr com.apple.quarantine /Applications/OverTerm.app
 ```
 
-The second line is needed because the app is not signed with an Apple
-Developer certificate yet. Homebrew marks anything it downloads as
-quarantined, and macOS refuses to open a quarantined app it cannot verify,
-reporting that the developer could not be checked for malware. Removing
-that mark is what lets it open. On macOS 15 and later, opening it from the
-right-click menu no longer works as a way around this.
+On macOS 15 and later, opening the app from the right-click menu stopped
+being a way around this.
 
-Signing will remove the need for the second line entirely.
-
-Uninstalling takes the Claude Code entries below with it:
+### Uninstall
 
 ```sh
-brew uninstall --cask overterm
+curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/uninstall.sh | sh
 ```
+
+That removes the app and the Claude Code entries described below.
+`brew uninstall --cask overterm` attempts the same. To keep the app and
+drop only the entries, use the switch in its settings.
 
 ## Claude Code
 
@@ -61,9 +101,13 @@ reads it back out of the session it arrived on. Nothing listens on a port,
 there is no secret to handle, and it still works over SSH.
 
 The entries merge into whatever hooks you already have, and they go in once.
-To remove them, delete the four entries whose command mentions `overterm`
-from that file. OverTerm will not put them back. Detection falls back to
-reading the terminal, which is what every other CLI gets.
+The app says so the first time it does it.
+
+There is a switch for them in the settings, which is the easiest way to
+put them back if you removed them or to take them out and keep the app.
+Deleting the four entries whose command mentions `overterm` from that file
+by hand works too, and OverTerm will not put them back. Detection falls
+back to reading the terminal, which is what every other CLI gets.
 
 ## Stack
 
