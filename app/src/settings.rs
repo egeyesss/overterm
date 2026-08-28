@@ -304,6 +304,22 @@ mod tests {
     }
 
     #[test]
+    fn the_written_file_is_one_a_person_could_edit() {
+        // The file is documented as hand-editable, so its shape is part
+        // of the interface. It also catches the ordering trap: TOML puts
+        // every bare key before the first section header, so a scalar
+        // field declared after a table cannot be serialised at all.
+        let text = toml::to_string_pretty(&Settings::default()).expect("serialise");
+        assert!(text.contains("opacity = 100"), "got:\n{text}");
+        assert!(text.contains("[window]"), "got:\n{text}");
+        assert!(text.contains("[cues]"), "got:\n{text}");
+        assert!(
+            text.find("opacity").unwrap() < text.find("[window]").unwrap(),
+            "plain values have to come before the first table:\n{text}"
+        );
+    }
+
+    #[test]
     fn a_file_written_before_the_preferences_existed_still_loads() {
         // The shape v0.1.0 wrote. Everything added since has to arrive as
         // its default rather than as zero, or an upgrade would silently
