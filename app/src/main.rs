@@ -65,6 +65,7 @@ fn main() {
             if let Err(e) = platform::make_overlay(&window) {
                 eprintln!("[platform] overlay setup failed: {e}");
             }
+            settings::apply_to_window(&window);
             // Detection works without these; they make it exact for the
             // tools that report. Never fatal: a settings file we cannot
             // read or write leaves the fallback detector in charge.
@@ -94,6 +95,8 @@ fn main() {
             hooks::install_hooks,
             hooks::uninstall_hooks,
             hooks::hooks_installed,
+            settings::set_window_opacity,
+            settings::window_opacity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OverTerm");

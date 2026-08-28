@@ -23,6 +23,14 @@ pub fn show_without_focus<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), S
     window.show().map_err(|e| e.to_string())
 }
 
+/// Ports fill this in: Windows wants `WS_EX_LAYERED` plus
+/// `SetLayeredWindowAttributes`, and a Linux compositor wants
+/// `_NET_WM_WINDOW_OPACITY`. Leaving the window opaque is the safe
+/// failure, since a window nobody can see through is still usable.
+pub fn set_opacity<R: Runtime>(_window: &WebviewWindow<R>, _alpha: f64) -> Result<(), String> {
+    Ok(())
+}
+
 /// Nothing to do: the Dock and Spaces are a macOS idea.
 pub fn make_accessory<R: Runtime>(_app: &mut App<R>) {}
 
