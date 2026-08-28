@@ -4,11 +4,14 @@
 //! module is only the hands: it resizes the window, raises it without
 //! stealing focus, and tells the frontend which view to show.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use overterm_core::choreo::{ChoreoConfig, ChoreoEvent, Cues, WindowAction, WindowMode, plan};
+use overterm_core::choreo::{
+    ChoreoConfig, ChoreoEvent, Context, Cues, WindowAction, WindowMode, plan,
+};
 use overterm_core::{AgentState, StateChange};
 use serde::Serialize;
 use tauri::{
@@ -53,6 +56,19 @@ struct AttentionPayload {
     cues: Cues,
 }
 
+/// What the window knows about one session inside it.
+struct SessionState {
+    state: AgentState,
+    /// The user has handed this session something since it last reached a
+    /// conclusion. Attention cues are for answering a question somebody
+    /// asked, and a terminal does things nobody asked for.
+    user_asked: bool,
+    /// Whether this session is really doing work, asked before the
+    /// terminal is hidden. Supplied by the session layer, which owns the
+    /// detector.
+    work_check: WorkCheck,
+}
+
 struct Inner {
     /// Behind a lock because the settings can change while the app runs.
     /// Always copied out rather than held: the window calls below can
@@ -63,21 +79,16 @@ struct Inner {
     /// generation it was scheduled with is still current, so work that
     /// finishes quickly never collapses the window.
     generation: AtomicU64,
-    work_check: Mutex<Option<WorkCheck>>,
-    /// Bumped when a new session registers, so the watcher belonging to
-    /// the old one stops.
-    work_generation: AtomicU64,
+    /// Every live session in this window, by id.
+    sessions: Mutex<HashMap<String, SessionState>>,
+    /// Whether the watcher that reveals a stalled session is running. One
+    /// per window rather than one per session, because the question it
+    /// asks is about the window and several copies would race to answer.
+    watching: AtomicBool,
 }
 
 struct Windowing {
     mode: WindowMode,
-    state: AgentState,
-    /// Whether the user has handed this session something to do since it
-    /// last reached a conclusion. Attention cues are for answering a
-    /// question somebody asked, and a terminal does things nobody asked
-    /// for: the folder trust prompt Claude Code shows before the user has
-    /// said anything is the case this exists for.
-    user_asked: bool,
     /// Height to restore when expanding, remembered from the last time
     /// the window was expanded so the user's own resizing survives.
     panel_height: f64,
@@ -92,13 +103,11 @@ impl Choreographer {
             cfg: Mutex::new(cfg),
             state: Mutex::new(Windowing {
                 mode: WindowMode::default(),
-                state: AgentState::Idle,
-                user_asked: false,
                 panel_height: DEFAULT_PANEL_HEIGHT,
             }),
             generation: AtomicU64::new(0),
-            work_check: Mutex::new(None),
-            work_generation: AtomicU64::new(0),
+            sessions: Mutex::new(HashMap::new()),
+            watching: AtomicBool::new(false),
         }))
     }
 
@@ -115,13 +124,36 @@ impl Choreographer {
         *self.0.cfg.lock().unwrap() = cfg;
     }
 
-    /// Register how to tell whether the session is working, and start
-    /// watching for it going still while collapsed. Called when a session
-    /// spawns.
-    pub fn set_work_check<R: Runtime>(&self, app: &AppHandle<R>, check: WorkCheck) {
-        *self.0.work_check.lock().unwrap() = Some(check);
-        let generation = self.0.work_generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.watch_for_stall(app, generation);
+    /// Take a session into the window, and start watching for a stalled
+    /// one if nothing is watching yet.
+    pub fn add_session<R: Runtime>(&self, app: &AppHandle<R>, id: &str, check: WorkCheck) {
+        self.0.sessions.lock().unwrap().insert(
+            id.to_string(),
+            SessionState {
+                state: AgentState::Idle,
+                user_asked: false,
+                work_check: check,
+            },
+        );
+        // The watcher asks a question about the window, not about any one
+        // session, so it starts once and keeps running. One per session
+        // would leave several of them racing to reveal the same window.
+        if !self.0.watching.swap(true, Ordering::SeqCst) {
+            self.watch_for_stall(app);
+        }
+    }
+
+    /// A session ended. Its state goes with it, or the window would keep
+    /// refusing to collapse on behalf of something that is gone.
+    pub fn remove_session(&self, id: &str) {
+        self.0.sessions.lock().unwrap().remove(id);
+    }
+
+    /// Whether some session other than `except` is waiting on the user.
+    fn others_want_user(&self, except: &str) -> bool {
+        self.0.sessions.lock().unwrap().iter().any(|(id, session)| {
+            id != except && matches!(session.state, AgentState::Done | AgentState::NeedsInput)
+        })
     }
 
     /// Bring the terminal back when a collapsed session stops working
@@ -132,21 +164,18 @@ impl Choreographer {
     /// stays Busy, nothing finishes, and none of the event-driven rules
     /// fire. Going still is the signal that whatever is on screen is
     /// meant to be read.
-    fn watch_for_stall<R: Runtime>(&self, app: &AppHandle<R>, generation: u64) {
+    fn watch_for_stall<R: Runtime>(&self, app: &AppHandle<R>) {
         let this = self.clone();
         let app = app.clone();
         std::thread::spawn(move || {
             let mut still_for_ms = 0u64;
             loop {
                 std::thread::sleep(Duration::from_millis(STALL_POLL_MS));
-                if this.0.work_generation.load(Ordering::SeqCst) != generation {
-                    return; // a newer session owns the window now
-                }
-                let (mode, state) = {
-                    let windowing = this.0.state.lock().unwrap();
-                    (windowing.mode, windowing.state)
-                };
-                if mode != WindowMode::Bar || state != AgentState::Busy || this.working() {
+                let mode = this.0.state.lock().unwrap().mode;
+                // Only a collapsed window has anything to reveal, and only
+                // a session that is busy on paper can be stalled: one that
+                // already concluded has had its say.
+                if mode != WindowMode::Bar || !this.any_session_busy() || this.working() {
                     still_for_ms = 0;
                     continue;
                 }
@@ -166,11 +195,27 @@ impl Choreographer {
         });
     }
 
-    /// With no session to protect there is nothing to hide, so an
-    /// unanswerable question is not a reason to refuse.
+    /// Whether every session is genuinely working.
+    ///
+    /// Deliberately all rather than any: the question is "is it safe to
+    /// hide the terminal", and one session sitting on something nobody
+    /// can see is reason enough to keep it. With no sessions there is
+    /// nothing to protect, so an unanswerable question is not a reason to
+    /// refuse.
     fn working(&self) -> bool {
-        let check = self.0.work_check.lock().unwrap().clone();
-        check.is_none_or(|check| check())
+        let checks: Vec<WorkCheck> = {
+            let sessions = self.0.sessions.lock().unwrap();
+            sessions.values().map(|s| s.work_check.clone()).collect()
+        };
+        // Released before the checks run: each one reaches into a
+        // detector, and holding this meanwhile would make every state
+        // change in every other session queue up behind it.
+        checks.iter().all(|check| check())
+    }
+
+    fn any_session_busy(&self) -> bool {
+        let sessions = self.0.sessions.lock().unwrap();
+        sessions.values().any(|s| s.state == AgentState::Busy)
     }
 
     pub fn mode(&self) -> WindowMode {
@@ -178,35 +223,49 @@ impl Choreographer {
     }
 
     /// Run the plan for one detected transition.
-    pub fn on_state_change<R: Runtime>(&self, app: &AppHandle<R>, change: &StateChange) {
-        self.dispatch(app, ChoreoEvent::StateChanged(change.clone()));
+    pub fn on_state_change<R: Runtime>(&self, app: &AppHandle<R>, id: &str, change: &StateChange) {
+        self.dispatch(app, id, ChoreoEvent::StateChanged(change.clone()));
     }
 
-    /// The user sent a line to the session. Handing over a job is the only
+    /// The user sent a line to a session. Handing over a job is the only
     /// thing that means the terminal can get out of the way.
-    pub fn on_submit<R: Runtime>(&self, app: &AppHandle<R>) {
-        self.dispatch(app, ChoreoEvent::Submitted);
+    pub fn on_submit<R: Runtime>(&self, app: &AppHandle<R>, id: &str) {
+        self.dispatch(app, id, ChoreoEvent::Submitted);
     }
 
-    fn dispatch<R: Runtime>(&self, app: &AppHandle<R>, event: ChoreoEvent) {
+    fn dispatch<R: Runtime>(&self, app: &AppHandle<R>, id: &str, event: ChoreoEvent) {
+        // Read before this session's own state is updated, so a session
+        // that has just concluded does not count itself as one of the
+        // others waiting.
+        let others_want_user = self.others_want_user(id);
+
         let user_asked = {
-            let mut windowing = self.0.state.lock().unwrap();
+            let mut sessions = self.0.sessions.lock().unwrap();
+            // A session that has already gone is not worth planning for.
+            let Some(session) = sessions.get_mut(id) else {
+                return;
+            };
             match &event {
-                ChoreoEvent::Submitted => windowing.user_asked = true,
-                ChoreoEvent::StateChanged(change) => windowing.state = change.to,
+                ChoreoEvent::Submitted => session.user_asked = true,
+                ChoreoEvent::StateChanged(change) => session.state = change.to,
             }
-            let asked = windowing.user_asked;
-            // Spent on the conclusion it belongs to, so the next thing
-            // the session does on its own is quiet again.
+            let asked = session.user_asked;
+            // Spent on the conclusion it belongs to, so whatever the
+            // session does next on its own is quiet again.
             if let ChoreoEvent::StateChanged(change) = &event
                 && matches!(change.to, AgentState::Done | AgentState::NeedsInput)
             {
-                windowing.user_asked = false;
+                session.user_asked = false;
             }
             asked
         };
+
+        let ctx = Context {
+            user_asked,
+            others_want_user,
+        };
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        for action in plan(&event, &self.cfg(), user_asked) {
+        for action in plan(&event, &self.cfg(), ctx) {
             self.apply(app, action, generation);
         }
     }

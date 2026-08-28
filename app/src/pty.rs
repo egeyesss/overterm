@@ -106,6 +106,7 @@ pub struct Sessions(Mutex<HashMap<String, SessionHandle>>);
 fn emit_changes(
     app: &AppHandle,
     choreo: &Choreographer,
+    session_id: &str,
     events: &Channel<PtyEvent>,
     changes: Vec<StateChange>,
 ) {
@@ -114,7 +115,7 @@ fn emit_changes(
             state: change.to,
             cause: format!("{:?}", change.cause),
         });
-        choreo.on_state_change(app, &change);
+        choreo.on_state_change(app, session_id, &change);
     }
 }
 
@@ -168,8 +169,9 @@ pub fn spawn_session(
     // before it hides the terminal.
     {
         let detector = detector.clone();
-        choreo.set_work_check(
+        choreo.add_session(
             &app,
+            &id,
             Arc::new(move || detector.lock().unwrap().is_working(Instant::now())),
         );
     }
@@ -187,6 +189,7 @@ pub fn spawn_session(
 
     // Reader: PTY output to the webview and the detector.
     {
+        let session_id = id.clone();
         let detector = detector.clone();
         let alive = alive.clone();
         let events = on_event.clone();
@@ -213,16 +216,20 @@ pub fn spawn_session(
                         {
                             break; // webview went away
                         }
-                        emit_changes(&app, &choreo, &events, changes);
+                        emit_changes(&app, &choreo, &session_id, &events, changes);
                         // After the transitions, for the same reason the
                         // keystroke path does it last.
                         if submitted {
-                            choreo.on_submit(&app);
+                            choreo.on_submit(&app, &session_id);
                         }
                     }
                 }
             }
             alive.store(false, Ordering::Relaxed);
+            // The window stops holding itself open on this session's
+            // behalf. Without this a session that exited mid-turn would
+            // keep the terminal from ever collapsing again.
+            choreo.remove_session(&session_id);
             let code = output.child.wait().ok().map(|status| status.exit_code());
             let _ = events.send(PtyEvent::Exited { code });
         });
@@ -230,13 +237,14 @@ pub fn spawn_session(
 
     // Ticker: lets quiescence conclusions fire while the PTY is silent.
     {
+        let ticker_id = id.clone();
         let alive = alive.clone();
         let choreo = choreo.inner().clone();
         std::thread::spawn(move || {
             while alive.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_millis(100));
                 let changes = detector.lock().unwrap().tick(Instant::now());
-                emit_changes(&app, &choreo, &on_event, changes);
+                emit_changes(&app, &choreo, &ticker_id, &on_event, changes);
             }
         });
     }
@@ -263,7 +271,7 @@ pub fn write_pty(
         let changes = detector.feed_input(data.as_bytes(), now);
         (changes, detector.precise_source_active(now))
     };
-    emit_changes(&app, &choreo, &handle.events, changes);
+    emit_changes(&app, &choreo, &session_id, &handle.events, changes);
     let written = handle
         .session
         .write(data.as_bytes())
@@ -275,7 +283,7 @@ pub fn write_pty(
     // Scheduled after the transitions above so it is the collapse that
     // survives, not one they cancelled.
     if !precise && (data.contains('\r') || data.contains('\n')) {
-        choreo.on_submit(&app);
+        choreo.on_submit(&app, &session_id);
     }
     written
 }
@@ -297,13 +305,18 @@ pub fn resize_pty(
 }
 
 #[tauri::command]
-pub fn kill_session(session_id: String, sessions: State<'_, Sessions>) -> Result<(), String> {
+pub fn kill_session(
+    session_id: String,
+    sessions: State<'_, Sessions>,
+    choreo: State<'_, Choreographer>,
+) -> Result<(), String> {
     let mut sessions = sessions.0.lock().unwrap();
     // Removing the session drops the PTY master too, so the reader thread
     // unblocks and the exit event fires.
     match sessions.remove(&session_id) {
         Some(mut handle) => {
             handle.alive.store(false, Ordering::Relaxed);
+            choreo.remove_session(&session_id);
             handle.session.kill().map_err(|e| e.to_string())
         }
         None => Ok(()),
