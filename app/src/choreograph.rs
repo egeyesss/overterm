@@ -11,7 +11,9 @@ use std::time::Duration;
 use overterm_core::choreo::{ChoreoConfig, ChoreoEvent, Cues, WindowAction, WindowMode, plan};
 use overterm_core::{AgentState, StateChange};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, Runtime, State};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime, State, WebviewWindow,
+};
 
 use crate::platform::PlatformWindow;
 
@@ -272,7 +274,7 @@ impl Choreographer {
             state.mode = WindowMode::Bar;
         }
         if let Some(width) = logical_width(&window) {
-            let _ = window.set_size(LogicalSize::new(width, BAR_HEIGHT));
+            resize_keeping_top(&window, width, BAR_HEIGHT);
         }
         let _ = app.emit(
             EVENT_MODE,
@@ -292,7 +294,7 @@ impl Choreographer {
             state.panel_height
         };
         if let Some(width) = logical_width(&window) {
-            let _ = window.set_size(LogicalSize::new(width, height));
+            resize_keeping_top(&window, width, height);
         }
         if raise {
             // An agent finishing its work must never pull keyboard focus
@@ -314,6 +316,67 @@ fn logical_size<R: Runtime>(window: &tauri::WebviewWindow<R>) -> Option<(f64, f6
     let scale = window.scale_factor().ok()?;
     let size = window.inner_size().ok()?.to_logical::<f64>(scale);
     Some((size.width, size.height))
+}
+
+/// Resize without moving the top edge, and keep the result on screen.
+///
+/// Tauri positions a window by its top-left corner, but a macOS window
+/// frame is anchored at its bottom-left, so growing the height alone
+/// pushes the top of the window upward. Expanding a bar that sat near the
+/// top of the display put the title bar above the top of the screen,
+/// taking the only part you can drag with it, and there was then no way
+/// to get the window back.
+fn resize_keeping_top<R: Runtime>(window: &WebviewWindow<R>, width: f64, height: f64) {
+    let before = window.outer_position().ok();
+    if let Err(e) = window.set_size(LogicalSize::new(width, height)) {
+        eprintln!("[choreograph] resize failed: {e}");
+        return;
+    }
+    let Some(top_left) = before else {
+        return;
+    };
+    let _ = window.set_position(top_left);
+    keep_on_screen(window, height);
+
+    // Set OVERTERM_WINDOW_DEBUG to watch where the window actually ends
+    // up. "I asked for this position" and "the window is at this
+    // position" are different claims, and only the second one is worth
+    // anything: this whole function exists because a resize was moving
+    // the window somewhere nobody asked it to go.
+    if std::env::var_os("OVERTERM_WINDOW_DEBUG").is_some()
+        && let Ok(after) = window.outer_position()
+    {
+        eprintln!(
+            "[choreograph] resize to {width}x{height}: top-left {},{} -> {},{}",
+            top_left.x, top_left.y, after.x, after.y
+        );
+    }
+}
+
+/// Pull the window back onto the display if it now hangs off the bottom.
+///
+/// Only ever moves it up, and never past the top of the screen, because
+/// the top edge is where the part you can grab lives. A window taller
+/// than the display keeps its top on screen rather than its bottom.
+fn keep_on_screen<R: Runtime>(window: &WebviewWindow<R>, height: f64) {
+    let (Ok(Some(monitor)), Ok(position)) = (window.current_monitor(), window.outer_position())
+    else {
+        return;
+    };
+    let screen_top = monitor.position().y;
+    let screen_bottom = screen_top + monitor.size().height as i32;
+    let tall = (height * monitor.scale_factor()).round() as i32;
+
+    let mut y = position.y;
+    if y + tall > screen_bottom {
+        y = screen_bottom - tall;
+    }
+    if y < screen_top {
+        y = screen_top;
+    }
+    if y != position.y {
+        let _ = window.set_position(PhysicalPosition::new(position.x, y));
+    }
 }
 
 fn logical_width<R: Runtime>(window: &tauri::WebviewWindow<R>) -> Option<f64> {
