@@ -1,0 +1,112 @@
+name: release
+
+# Pushing a version tag builds the app and publishes it. Cutting a
+# release used to be a laptop build, which meant the artifact depended on
+# whatever happened to be in that laptop's target directory.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag that disagrees with the tree publishes a build named after a
+      # version that was never in the source, and nobody notices until
+      # somebody reports a bug against it.
+      - name: Check the tag against the version in the tree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          # v0.2.0-rc.1 is a build of 0.2.0, so compare the release part.
+          want="${tag%%-*}"
+          conf=$(jq -r .version app/tauri.conf.json)
+          crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "tag=$want tauri.conf.json=$conf Cargo.toml=$crate"
+          if [ "$conf" != "$want" ] || [ "$crate" != "$want" ]; then
+            echo "::error::the tag and the version in the tree disagree"
+            exit 1
+          fi
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      # A universal binary is compiled once per architecture, so both
+      # targets have to be installed even though the runner is one of them.
+      - name: Add both Mac targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/ui/package-lock.json
+
+      # Unlike the check workflow this does need the frontend, because the
+      # bundle it produces is the thing people run.
+      - name: Install the build tooling
+        run: |
+          npm ci
+          npm ci --prefix app/ui
+
+      - name: Build
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Package the app
+        run: |
+          set -eu
+          bundle=target/universal-apple-darwin/release/bundle
+          version=$(jq -r .version app/tauri.conf.json)
+          mkdir -p dist
+
+          # A tarball as well as the disk image. The install script pulls
+          # this one, and unpacking a tarball is one command where getting
+          # a single app out of a disk image is a mount and a copy and an
+          # unmount. Its name carries no version so the download URL for
+          # the newest release is always the same, which is what lets the
+          # install script stay untouched between releases.
+          COPYFILE_DISABLE=1 tar -czf dist/OverTerm_universal.tar.gz \
+            -C "$bundle/macos" OverTerm.app
+
+          # The disk image keeps its versioned name: the Homebrew cask
+          # builds its URL out of the version.
+          cp "$bundle/dmg/OverTerm_${version}_universal.dmg" dist/
+
+          cd dist
+          for f in OverTerm_universal.tar.gz "OverTerm_${version}_universal.dmg"; do
+            shasum -a 256 "$f" > "$f.sha256"
+          done
+          ls -la
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          tag="$GITHUB_REF_NAME"
+          # A tag with a hyphen in it is a release candidate. Marking it as
+          # a prerelease keeps it out of the "latest" that the install
+          # script downloads, so trying one out cannot hand it to everyone.
+          case "$tag" in
+            *-*) prerelease=true ;;
+            *)   prerelease=false ;;
+          esac
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          elif [ "$prerelease" = true ]; then
+            gh release create "$tag" dist/* --title "$tag" --generate-notes --prerelease
+          else
+            gh release create "$tag" dist/* --title "$tag" --generate-notes
+          fi
