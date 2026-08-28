@@ -8,8 +8,19 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tauri::{Runtime, WebviewWindow};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+use crate::platform::PlatformWindow;
+
+/// Range the window opacity is held to.
+///
+/// The floor is not zero on purpose: an always-on-top window that is
+/// fully transparent still sits above everything and still takes clicks,
+/// so it would be a window nobody can see and nobody can get rid of.
+pub const MIN_OPACITY: u8 = 10;
+pub const MAX_OPACITY: u8 = 100;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 // Missing fields take their default, so a file written by an older build
 // still loads, and one written by a newer build loses only what this
 // build does not know about.
@@ -23,6 +34,31 @@ pub struct Settings {
     /// deleted from their own config is worse than one that never
     /// offered to set it up.
     pub claude_hooks_installed: bool,
+
+    /// How see-through the window is, as a percentage.
+    pub opacity: u8,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            claude_hooks_installed: false,
+            // Opaque. Anyone who wants to see through the overlay asks
+            // for it; nobody should have to work out why their terminal
+            // arrived faded.
+            opacity: MAX_OPACITY,
+        }
+    }
+}
+
+impl Settings {
+    /// Opacity as the 0.0 to 1.0 the window layer wants, with a value
+    /// from outside the supported range brought back into it. A settings
+    /// file is a text file someone can edit by hand, so this cannot
+    /// assume the number in it is sensible.
+    pub fn alpha(&self) -> f64 {
+        f64::from(self.opacity.clamp(MIN_OPACITY, MAX_OPACITY)) / 100.0
+    }
 }
 
 /// Where the settings file lives.
@@ -55,6 +91,44 @@ pub fn load_from(path: &Path) -> Settings {
             Settings::default()
         }
     }
+}
+
+/// Read the settings from wherever they live on this machine.
+pub fn load() -> Settings {
+    path().map(|p| load_from(&p)).unwrap_or_default()
+}
+
+/// Put the stored opacity on the window. Called once the window exists.
+pub fn apply_to_window<R: Runtime>(window: &WebviewWindow<R>) {
+    let settings = load();
+    if settings.opacity == MAX_OPACITY {
+        return; // already how a window arrives
+    }
+    if let Err(e) = window.set_opacity(settings.alpha()) {
+        eprintln!("[settings] could not set opacity: {e}");
+    }
+}
+
+/// Change how see-through the window is, and remember it.
+///
+/// Returns what the opacity ended up as, which is not always what was
+/// asked for: the range is clamped so the window cannot be faded to the
+/// point of being unfindable.
+#[tauri::command]
+pub fn set_window_opacity<R: Runtime>(window: WebviewWindow<R>, percent: u8) -> Result<u8, String> {
+    let mut settings = load();
+    settings.opacity = percent.clamp(MIN_OPACITY, MAX_OPACITY);
+    window.set_opacity(settings.alpha())?;
+    // The window has already changed, so a settings file that cannot be
+    // written costs the user the next launch, not this one.
+    let path = path().ok_or("no home directory to store settings in")?;
+    save_to(&path, &settings)?;
+    Ok(settings.opacity)
+}
+
+#[tauri::command]
+pub fn window_opacity() -> u8 {
+    load().opacity
 }
 
 pub fn save_to(path: &Path, settings: &Settings) -> Result<(), String> {
@@ -91,6 +165,7 @@ mod tests {
         let path = scratch("round-trip");
         let settings = Settings {
             claude_hooks_installed: true,
+            opacity: 60,
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
@@ -101,6 +176,32 @@ mod tests {
         let path = scratch("broken");
         std::fs::write(&path, "this is not = = toml").expect("write");
         assert_eq!(load_from(&path), Settings::default());
+    }
+
+    #[test]
+    fn opacity_defaults_to_opaque() {
+        // A file written before this field existed must not read as a
+        // window faded to nothing.
+        let path = scratch("no-opacity");
+        std::fs::write(&path, "claude_hooks_installed = true\n").expect("write");
+        let settings = load_from(&path);
+        assert_eq!(settings.opacity, MAX_OPACITY);
+        assert_eq!(settings.alpha(), 1.0);
+    }
+
+    #[test]
+    fn a_hand_edited_opacity_is_brought_back_into_range() {
+        for (written, expected) in [(0, 0.1), (5, 0.1), (10, 0.1), (55, 0.55), (200, 1.0)] {
+            let settings = Settings {
+                opacity: written,
+                ..Settings::default()
+            };
+            assert!(
+                (settings.alpha() - expected).abs() < f64::EPSILON,
+                "opacity {written} gave {} rather than {expected}",
+                settings.alpha()
+            );
+        }
     }
 
     #[test]

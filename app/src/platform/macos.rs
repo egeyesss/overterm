@@ -52,6 +52,17 @@ where
         .map_err(|e| e.to_string())
 }
 
+/// Fade the whole window, chrome and terminal together.
+///
+/// `alpha` is 0.0 to 1.0. AppKit composites the window at this alpha, so
+/// unlike a CSS opacity it makes what is behind the overlay genuinely
+/// visible rather than blending against the window's own background.
+pub fn set_opacity<R: Runtime>(window: &WebviewWindow<R>, alpha: f64) -> Result<(), String> {
+    with_window(window, "opacity", move |ns| {
+        ns.setAlphaValue(alpha);
+    })
+}
+
 pub fn set_floating<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     with_window(window, "floating level", |ns| {
         // Status level, which is 25. The floating level this started on

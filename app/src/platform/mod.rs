@@ -30,6 +30,10 @@ pub trait PlatformWindow {
     /// an agent finishing its work triggers, so it must never steal a
     /// keystroke from whatever the user is typing in.
     fn show_without_focus(&self) -> Result<(), String>;
+
+    /// Fade the window so what is behind it stays readable. `alpha` runs
+    /// from 0.0 to 1.0.
+    fn set_opacity(&self, alpha: f64) -> Result<(), String>;
 }
 
 impl<R: Runtime> PlatformWindow for WebviewWindow<R> {
@@ -51,6 +55,10 @@ impl<R: Runtime> PlatformWindow for WebviewWindow<R> {
 
     fn show_without_focus(&self) -> Result<(), String> {
         imp::show_without_focus(self)
+    }
+
+    fn set_opacity(&self, alpha: f64) -> Result<(), String> {
+        imp::set_opacity(self, alpha)
     }
 }
 

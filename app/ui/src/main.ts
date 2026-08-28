@@ -2,6 +2,11 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { SearchAddon } from '@xterm/addon-search';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
 
@@ -15,11 +20,23 @@ type PtyEvent =
 
 type Cues = { glow: boolean; sound: boolean; notify: boolean };
 
+/// Font sizes the zoom shortcuts step between, smallest to largest.
+const FONT_SIZES = [9, 10, 11, 12, 13, 14, 16, 18, 20, 24];
+const DEFAULT_FONT_SIZE = 13;
+
 const term = new Terminal({
   cursorBlink: true,
-  fontSize: 13,
+  fontSize: DEFAULT_FONT_SIZE,
   fontFamily: 'Menlo, Monaco, "SF Mono", monospace',
   scrollback: 10_000,
+  // Required by the Unicode 11 addon below, which registers a character
+  // width provider through an API xterm still calls proposed. Without it
+  // loading that addon throws.
+  allowProposedApi: true,
+  // Option sends ESC rather than composing accented characters, which is
+  // what every agent CLI expects. It is also what gets Option+Enter below,
+  // and Claude Code's other Option shortcuts, working at all.
+  macOptionIsMeta: true,
   theme: {
     background: '#1a1b26',
     foreground: '#c0caf5',
@@ -29,8 +46,43 @@ const term = new Terminal({
 const fit = new FitAddon();
 term.loadAddon(fit);
 
+// Agents draw box-drawing characters and emoji, both of which are two
+// cells wide under Unicode 11 and one cell wide under the default table.
+// Getting this wrong shears a TUI sideways by a column per glyph.
+term.loadAddon(new Unicode11Addon());
+term.unicode.activeVersion = '11';
+
+const search = new SearchAddon();
+term.loadAddon(search);
+
+// Agents print localhost addresses, pull request links and doc URLs all
+// day. The handler is ours because the default one calls window.open,
+// which in a webview navigates the app away from itself.
+term.loadAddon(
+  new WebLinksAddon((_event, uri) => {
+    // Reported rather than swallowed. A link that cannot be opened is
+    // worth knowing about, and a silent catch here is what hid the URL
+    // scope being missing from the app's permissions.
+    openUrl(uri).catch((err) => console.error(`could not open ${uri}:`, err));
+  }),
+);
+
 const container = document.getElementById('terminal')!;
 term.open(container);
+
+// Agent output arrives in bursts large enough to make the DOM renderer
+// stutter. The GPU one keeps up, but its context can be taken away when
+// the machine is under memory pressure, and an addon that has lost its
+// context renders nothing at all. Dropping it falls back to the renderer
+// that was there before.
+try {
+  const webgl = new WebglAddon();
+  webgl.onContextLoss(() => webgl.dispose());
+  term.loadAddon(webgl);
+} catch {
+  // No WebGL in this webview. The default renderer is correct, just slower.
+}
+
 fit.fit();
 term.focus();
 
@@ -98,7 +150,10 @@ function applyMode(next: WindowMode) {
     // before xterm can lay anything out.
     requestAnimationFrame(() => fit.fit());
   } else {
-    barInput.value = pending;
+    // Nothing to search once the terminal is off screen, and leaving it
+    // open means it comes back with a stale query on the next expand.
+    if (!findBox.hidden) closeFind();
+    showDraft();
   }
   // Keep typing flowing across an automatic switch, but only when the
   // window already had focus, so nothing is taken from the app the user
@@ -127,6 +182,132 @@ for (const button of document.querySelectorAll('.icon.hide')) {
 }
 
 listen<{ mode: WindowMode }>('overterm://mode', (event) => applyMode(event.payload.mode));
+
+// Escape reaches the find bar even when the terminal has focus, which is
+// where you are when you opened it and found what you wanted.
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !findBox.hidden) closeFind();
+});
+
+// --- terminal shortcuts ----------------------------------------------
+
+/// Resize the font a step at a time, then tell the PTY its new size.
+///
+/// The terminal is measured in cells, so a bigger font means fewer
+/// columns. Refitting is what tells the program on the other end to
+/// redraw itself narrower instead of wrapping at the old width.
+function zoom(steps: number) {
+  const current = FONT_SIZES.indexOf(term.options.fontSize ?? DEFAULT_FONT_SIZE);
+  const from = current === -1 ? FONT_SIZES.indexOf(DEFAULT_FONT_SIZE) : current;
+  const next = Math.min(Math.max(from + steps, 0), FONT_SIZES.length - 1);
+  term.options.fontSize = FONT_SIZES[next];
+  fit.fit();
+}
+
+function resetZoom() {
+  term.options.fontSize = DEFAULT_FONT_SIZE;
+  fit.fit();
+}
+
+/// Copy the selection, and report whether there was one to copy.
+///
+/// The terminal draws to a canvas, so there is no selected text for the
+/// webview to copy on its own. Without this, Cmd+C over a selection does
+/// nothing at all.
+function copySelection(): boolean {
+  const selection = term.getSelection();
+  if (!selection) return false;
+  navigator.clipboard.writeText(selection).catch(() => {});
+  return true;
+}
+
+/// Read the clipboard and send it to the session.
+///
+/// Only used by the right-click below. Cmd+V is left alone, because the
+/// terminal already receives a real paste event and handling it here as
+/// well would send the clipboard twice.
+function paste() {
+  navigator.clipboard
+    .readText()
+    .then((text) => {
+      if (text) write(text);
+    })
+    .catch(() => {});
+}
+
+// Right-click pastes, the way it does in a terminal rather than the way
+// it does in a browser.
+container.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  paste();
+});
+
+// --- find ------------------------------------------------------------
+
+const findBox = document.getElementById('find')!;
+const findInput = document.getElementById('find-input') as HTMLInputElement;
+const findCount = document.getElementById('find-count')!;
+
+// Matches have to be painted by the addon: the terminal is a canvas, so
+// there is no text node to highlight. Colours come from the same palette
+// as the rest of the chrome.
+const findDecorations = {
+  matchBackground: '#3d59a1',
+  matchBorder: '#3d59a1',
+  matchOverviewRuler: '#3d59a1',
+  activeMatchBackground: '#e0af68',
+  activeMatchBorder: '#e0af68',
+  activeMatchColorOverviewRuler: '#e0af68',
+};
+
+search.onDidChangeResults(({ resultIndex, resultCount }) => {
+  findCount.textContent = resultCount ? `${resultIndex + 1}/${resultCount}` : 'none';
+  findBox.classList.toggle('no-matches', findInput.value !== '' && resultCount === 0);
+});
+
+function runFind(direction: 'next' | 'previous') {
+  const query = findInput.value;
+  if (!query) {
+    search.clearDecorations();
+    findCount.textContent = '';
+    findBox.classList.remove('no-matches');
+    return;
+  }
+  const options = { decorations: findDecorations };
+  if (direction === 'next') search.findNext(query, options);
+  else search.findPrevious(query, options);
+}
+
+function openFind() {
+  if (mode !== 'panel') return; // the terminal is not on screen in the bar
+  findBox.hidden = false;
+  findInput.select();
+  findInput.focus();
+}
+
+function closeFind() {
+  findBox.hidden = true;
+  search.clearDecorations();
+  findBox.classList.remove('no-matches');
+  term.focus();
+}
+
+findInput.addEventListener('input', () => runFind('next'));
+
+findInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    runFind(event.shiftKey ? 'previous' : 'next');
+  } else if (event.key === 'Escape') {
+    closeFind();
+  } else {
+    return;
+  }
+  event.preventDefault();
+});
+
+findBox.querySelector('.find-next')!.addEventListener('click', () => runFind('next'));
+findBox.querySelector('.find-prev')!.addEventListener('click', () => runFind('previous'));
+findBox.querySelector('.find-close')!.addEventListener('click', closeFind);
 
 // --- attention cues --------------------------------------------------
 
@@ -165,6 +346,16 @@ for (const clear of ['click', 'keydown'] as const) {
 
 // --- session ---------------------------------------------------------
 
+/// What a terminal has to send so an agent CLI inserts a line break
+/// instead of submitting.
+///
+/// Enter and Shift+Enter are the same byte in a plain terminal, so a CLI
+/// cannot tell them apart unless the terminal says so. ESC followed by a
+/// carriage return is the sequence Claude Code accepts for this, and the
+/// one its own editor integrations are configured to send. Option+Enter
+/// arrives here too, because `macOptionIsMeta` prefixes ESC.
+const NEWLINE = '\x1b\r';
+
 /// Best-effort mirror of what the user has typed since the last submit.
 ///
 /// The real buffer belongs to whatever is running in the PTY and cannot be
@@ -180,20 +371,35 @@ function write(data: string) {
 }
 
 function track(data: string) {
+  // A line break grows the draft. Checked before the escape guard below,
+  // which would otherwise drop it for starting with ESC.
+  if (data === NEWLINE) {
+    pending += '\n';
+    showDraft();
+    return;
+  }
   // Arrow keys, history recall and the like move a cursor inside the
   // program that this side cannot see. Leave the mirror alone rather than
   // let it drift.
   if (data.startsWith('\x1b')) return;
   for (const ch of data) {
-    if (ch === '\r' || ch === '\n' || ch === '\x03' || ch === '\x15') {
+    if (ch === '\r' || ch === '\x03' || ch === '\x15') {
       pending = '';
+    } else if (ch === '\n') {
+      pending += '\n'; // Ctrl+J, the line break that needs no setup
     } else if (ch === '\x7f' || ch === '\b') {
       pending = pending.slice(0, -1);
     } else if (ch >= ' ') {
       pending += ch;
     }
   }
-  barInput.value = pending;
+  showDraft();
+}
+
+/// The bar is one line tall, so a draft with breaks in it is shown with
+/// them marked rather than flattened away.
+function showDraft() {
+  barInput.value = pending.replace(/\n/g, ' \u21b5 ');
 }
 
 // The bar input forwards keystrokes rather than submitting its contents.
@@ -204,9 +410,13 @@ barInput.addEventListener('keydown', (event) => {
   if (event.ctrlKey) {
     if (event.key === 'c') write('\x03');
     else if (event.key === 'u') write('\x15');
+    // The line break that works in every terminal with no setup, and the
+    // only one that reached the session from here before.
+    else if (event.key === 'j') write('\n');
     else return;
   } else if (event.key === 'Enter') {
-    write('\r');
+    // Same split the full terminal makes: shift means a line break.
+    write(event.shiftKey ? NEWLINE : '\r');
   } else if (event.key === 'Escape') {
     // How you interrupt Claude Code, and the bar is exactly where you
     // are when you want to. It changes no text, so the draft mirror
@@ -245,6 +455,53 @@ async function start() {
     cols: term.cols,
     rows: term.rows,
     onEvent,
+  });
+
+  // Keys handled here rather than by the terminal.
+  //
+  // Returning false is not enough on its own. xterm leaves the browser's
+  // default alone when this handler refuses a key, so the keypress event
+  // still fires, and its own keypress path asks this handler again with
+  // an event that is not a keydown. Waving that one through means the
+  // character gets sent after all: a shifted enter sent the line break
+  // and then a bare carriage return, and the carriage return submitted.
+  // Cancelling the keydown stops the keypress happening at all.
+  const handled = (event: KeyboardEvent) => {
+    event.preventDefault();
+    return false;
+  };
+
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type !== 'keydown') return true;
+    if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      write(NEWLINE);
+      return handled(event);
+    }
+    if (!event.metaKey) return true;
+    switch (event.key) {
+      case 'f':
+        openFind();
+        return handled(event);
+      case 'c':
+        // Nothing selected means nothing to copy, so let the key through
+        // rather than swallow it.
+        return copySelection() ? handled(event) : true;
+      case 'k':
+        term.clear();
+        return handled(event);
+      case '=':
+      case '+':
+        zoom(1);
+        return handled(event);
+      case '-':
+        zoom(-1);
+        return handled(event);
+      case '0':
+        resetZoom();
+        return handled(event);
+      default:
+        return true;
+    }
   });
 
   term.onData(write);

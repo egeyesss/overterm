@@ -228,9 +228,60 @@ body.state-busy .pill .dot {
   color: var(--line);
 }
 
+/* Find bar, floating over the top-right of the terminal. */
+#find {
+  position: absolute;
+  top: 32px;
+  right: 10px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+#find[hidden] {
+  display: none;
+}
+
+#find-input {
+  width: 160px;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+#find-input::placeholder {
+  color: var(--line);
+}
+
+#find-count {
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nothing typed yet, so a count would read as "no matches". */
+#find-count:empty {
+  display: none;
+}
+
+#find.no-matches #find-input {
+  color: var(--needs);
+}
+
 /* Only one view at a time. */
 body.mode-bar #terminal,
-body.mode-bar #titlebar {
+body.mode-bar #titlebar,
+body.mode-bar #find {
   display: none;
 }
 

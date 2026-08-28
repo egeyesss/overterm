@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main terminal window",
-  "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "description": "Capabilities for the main terminal window. Opening a link needs both opener entries: allow-open-url permits calling the command, and allow-default-urls carries the scope the URL itself is checked against. With only the first, every link is refused as out of scope.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "opener:allow-open-url",
+    "opener:allow-default-urls"
+  ]
 }
