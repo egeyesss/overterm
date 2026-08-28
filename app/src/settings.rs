@@ -109,7 +109,6 @@ pub struct WindowSettings {
 pub struct CueSettings {
     pub glow: bool,
     pub sound: bool,
-    pub notify: bool,
 }
 
 // Both of these take their defaults from the core crate rather than
@@ -133,7 +132,6 @@ impl Default for CueSettings {
         Self {
             glow: cues.glow,
             sound: cues.sound,
-            notify: cues.notify,
         }
     }
 }
@@ -174,7 +172,6 @@ impl Settings {
             cues: Cues {
                 glow: self.cues.glow,
                 sound: self.cues.sound,
-                notify: self.cues.notify,
             },
         }
     }
@@ -523,7 +520,6 @@ mod tests {
             cues: CueSettings {
                 glow: false,
                 sound: true,
-                notify: true,
             },
             ..Settings::default()
         };
@@ -532,7 +528,6 @@ mod tests {
         assert_eq!(cfg.collapse_delay_ms, 250);
         assert!(!cfg.cues.glow);
         assert!(cfg.cues.sound);
-        assert!(cfg.cues.notify);
     }
 
     #[test]

@@ -9,7 +9,6 @@
     "core:default",
     "core:window:allow-start-dragging",
     "opener:allow-open-url",
-    "opener:allow-default-urls",
-    "notification:default"
+    "opener:allow-default-urls"
   ]
 }

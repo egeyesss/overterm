@@ -37,18 +37,15 @@ pub struct Cues {
     pub glow: bool,
     /// Short sound.
     pub sound: bool,
-    /// Native notification, for when the window is hidden entirely.
-    pub notify: bool,
 }
 
 impl Default for Cues {
     fn default() -> Self {
         // Quiet by default: the window is on screen anyway, so a glow is
-        // enough. Sound and notifications are opt-in.
+        // enough. Sound is opt-in.
         Self {
             glow: true,
             sound: false,
-            notify: false,
         }
     }
 }

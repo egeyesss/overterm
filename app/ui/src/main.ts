@@ -2,11 +2,6 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from '@tauri-apps/plugin-notification';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -23,7 +18,7 @@ type PtyEvent =
   | { event: 'agentStateChanged'; data: { state: AgentState; cause: string } }
   | { event: 'exited'; data: { code: number | null } };
 
-type Cues = { glow: boolean; sound: boolean; notify: boolean };
+type Cues = { glow: boolean; sound: boolean };
 
 /// Mirrors the Rust struct, so the keys are snake_case the whole way
 /// through: what the interface shows and what somebody reads in
@@ -370,7 +365,6 @@ const expandWhenWanted = field<HTMLInputElement>('expand-when-wanted');
 const revealStalled = field<HTMLInputElement>('reveal-stalled');
 const cueGlow = field<HTMLInputElement>('cue-glow');
 const cueSound = field<HTMLInputElement>('cue-sound');
-const cueNotify = field<HTMLInputElement>('cue-notify');
 const hotkey = field<HTMLInputElement>('hotkey');
 const hotkeyNote = field<HTMLElement>('hotkey-note');
 const claudeHooks = field<HTMLInputElement>('claude-hooks');
@@ -389,7 +383,6 @@ function showSettings(current: Settings) {
   revealStalled.value = String(current.window.reveal_when_stalled_ms);
   cueGlow.checked = current.cues.glow;
   cueSound.checked = current.cues.sound;
-  cueNotify.checked = current.cues.notify;
   hotkey.value = current.hotkey;
   fontFamily.value = current.terminal.font_family;
   fontSize.value = String(current.terminal.font_size);
@@ -429,7 +422,7 @@ function saveSettings() {
       expand_when_wanted: expandWhenWanted.checked,
       reveal_when_stalled_ms: Number(revealStalled.value) || 0,
     },
-    cues: { glow: cueGlow.checked, sound: cueSound.checked, notify: cueNotify.checked },
+    cues: { glow: cueGlow.checked, sound: cueSound.checked },
     terminal: {
       font_family: fontFamily.value.trim() || settings.terminal.font_family,
       font_size: Number(fontSize.value) || settings.terminal.font_size,
@@ -459,7 +452,7 @@ opacity.addEventListener('input', () => {
 });
 opacity.addEventListener('change', saveSettings);
 
-for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound, cueNotify]) {
+for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound]) {
   input.addEventListener('change', saveSettings);
 }
 for (const input of [collapseDelay, revealStalled, fontSize, scrollback, fontFamily]) {
@@ -630,32 +623,11 @@ function chime() {
   }
 }
 
-/// Ask the OS once, the first time a notification is actually wanted,
-/// rather than on launch. A permission prompt on first run, for something
-/// that is off by default, is the kind of thing people say no to.
-async function notify(state: AgentState) {
-  try {
-    if (!(await isPermissionGranted()) && (await requestPermission()) !== 'granted') return;
-    sendNotification({
-      title: 'OverTerm',
-      body: state === 'needsInput' ? 'The session needs your input.' : 'The session finished.',
-    });
-  } catch {
-    // No notification centre, or permission refused. The glow and the
-    // sound are unaffected.
-  }
-}
-
 listen<{ active: boolean; cues: Cues }>('overterm://attention', (event) => {
   const { active, cues } = event.payload;
   body.classList.toggle('attention', active && cues.glow);
   body.classList.toggle('attention-needs', active && agentState === 'needsInput');
-  if (!active) return;
-  if (cues.sound) chime();
-  // Only when the user is somewhere else. A notification for a window
-  // they are looking at is noise, and this cue exists for the case the
-  // glow cannot cover, which is the window being hidden entirely.
-  if (cues.notify && !document.hasFocus()) notify(agentState);
+  if (active && cues.sound) chime();
 });
 
 // Any interaction means the user has seen it.
