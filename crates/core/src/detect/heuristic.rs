@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use regex::Regex;
 
-use super::{Adapter, Signal};
+use super::{Adapter, Profile, Signal};
 
 pub struct HeuristicConfig {
     /// Bytes within `burst_window` that count as a burst of output.
@@ -189,6 +189,25 @@ impl HeuristicAdapter {
     }
 }
 
+impl HeuristicAdapter {
+    /// Take the patterns for whatever is running now.
+    ///
+    /// Only the patterns move. Everything else about the screen model,
+    /// including what is already on it, belongs to the session rather
+    /// than to the program of the moment.
+    fn apply_profile(&mut self, profile: &Profile) {
+        let defaults = HeuristicConfig::default();
+        self.cfg.busy_pattern = profile
+            .busy_pattern
+            .clone()
+            .unwrap_or(defaults.busy_pattern);
+        self.cfg.prompt_pattern = profile
+            .prompt_pattern
+            .clone()
+            .unwrap_or(defaults.prompt_pattern);
+    }
+}
+
 impl Adapter for HeuristicAdapter {
     fn feed(&mut self, bytes: &[u8], now: Instant) -> Vec<Signal> {
         let mut signals = Vec::new();
@@ -281,6 +300,10 @@ impl Adapter for HeuristicAdapter {
             }
         }
         Vec::new()
+    }
+
+    fn set_profile(&mut self, profile: &Profile) {
+        self.apply_profile(profile);
     }
 
     fn resize(&mut self, cols: u16, rows: u16) {

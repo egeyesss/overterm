@@ -31,6 +31,32 @@ pub fn set_opacity<R: Runtime>(_window: &WebviewWindow<R>, _alpha: f64) -> Resul
     Ok(())
 }
 
+/// Ports fill this in. Linux reads `/proc/<pid>/comm`, which is a plain
+/// file and simpler than the macOS route. Windows has no process group on
+/// a console handle at all, so it needs a different question entirely.
+///
+/// Returning `None` is safe: a session with no name falls back to a
+/// plain label and everything else works.
+pub fn process_name(_pid: i32) -> Option<String> {
+    None
+}
+
+/// Ports fill this in too. Linux has it as the `/proc/<pid>/exe`
+/// symlink. It matters because a program's file name is not always its
+/// name: Claude Code installs its executable as the version number, so
+/// the path is the only thing that says what it is.
+pub fn process_path(_pid: i32) -> Option<String> {
+    None
+}
+
+/// Ports fill this in too. Linux has it as `/proc/<pid>/cmdline`, which
+/// is already NUL-separated and needs no unpacking. It matters because
+/// most of these tools are npm packages, so the program is `node` and
+/// only the arguments say which tool it is.
+pub fn process_args(_pid: i32) -> Option<Vec<String>> {
+    None
+}
+
 /// Nothing to do: the Dock and Spaces are a macOS idea.
 pub fn make_accessory<R: Runtime>(_app: &mut App<R>) {}
 

@@ -76,15 +76,167 @@ body.attention-needs::after {
   }
 }
 
-#terminal {
+#workspace {
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+
+/* Tab rail. Vertical so a narrow overlay spends its width on the
+   terminal rather than on labels. */
+#tabs {
+  flex: none;
+  width: 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.tab {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dim);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  /* A name longer than the box is cut off rather than spilling out of
+     it. The whole thing is still in the tooltip. */
+  overflow: hidden;
+}
+
+.tab .label {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  /* Belt and braces with the trimming the script does. A name that gets
+     through untrimmed is cut at the edge with an ellipsis rather than
+     spilling out of both sides of the box, which is what it did when the
+     mark for an agent failed to load and it fell back to the name. */
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+/* One glyph has room to be bigger than a word does. */
+.tab.has-icon .label {
+  font-size: 15px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* A mark fills the tab, which is what makes it read as an icon rather
+   than as a character that happens to be in the box. The files size
+   themselves in em, so the size is set here and not in the markup. */
+.tab .label svg,
+.tab .label img {
+  width: 19px;
+  height: 19px;
+  display: block;
+  opacity: 0.9;
+}
+
+/* A bitmap mark is not square-cropped like the drawn ones, so it is
+   fitted rather than stretched. */
+.tab .label img {
+  object-fit: contain;
+}
+
+.tab.active .label svg,
+.tab.active .label img,
+.tab:hover .label svg,
+.tab:hover .label img {
+  opacity: 1;
+}
+
+.tab:hover {
+  color: var(--fg);
+}
+
+.tab.active {
+  border-color: var(--busy);
+  color: var(--fg);
+}
+
+/* Per-tab state, so a session that wants you is visible from the tab
+   even while you are looking at a different one. */
+.tab .dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  background: transparent;
+}
+
+.tab.state-busy .dot {
+  background: var(--busy);
+}
+.tab.state-done .dot {
+  background: var(--done);
+}
+.tab.state-needsInput .dot {
+  background: var(--needs);
+}
+
+#tab-add {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#tab-add:hover {
+  color: var(--fg);
+  border-color: var(--dim);
+}
+
+#terminals {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+/* A pane measures as zero while hidden, and fitting a zero-sized
+   terminal reflows the agent's TUI down to nothing, so only the active
+   pane is ever laid out. */
+.pane {
+  position: absolute;
+  inset: 0;
   padding: 4px 0 4px 6px;
   box-sizing: border-box;
 }
 
+.pane[hidden] {
+  display: none;
+}
+
 /* Fill the padded container so FitAddon measures the right area. */
-#terminal .xterm {
+.pane .xterm {
   height: 100%;
 }
 
@@ -461,7 +613,7 @@ body.state-busy .pill .dot {
 }
 
 /* Only one view at a time. */
-body.mode-bar #terminal,
+body.mode-bar #workspace,
 body.mode-bar #titlebar,
 body.mode-bar #find,
 body.mode-bar #settings,

@@ -62,6 +62,33 @@ impl<R: Runtime> PlatformWindow for WebviewWindow<R> {
     }
 }
 
+/// Name of the program running as `pid`.
+///
+/// The second thing in this module that needs writing for a port, and
+/// the only one that is not about windows. It is what lets a tab say
+/// which agent is in it without the agent having to cooperate.
+pub fn process_name(pid: i32) -> Option<String> {
+    imp::process_name(pid)
+}
+
+/// Full path of the program running as `pid`.
+///
+/// Needed because a file name is not always a name. Claude Code installs
+/// its executable as the bare version number, so the process is called
+/// something like `2.1.250` and only the path says what it really is.
+pub fn process_path(pid: i32) -> Option<String> {
+    imp::process_path(pid)
+}
+
+/// Command line of the process running as `pid`.
+///
+/// The third thing a port has to write. Most agent CLIs are npm
+/// packages, so the program on the terminal is `node` and only the script
+/// path it was given says which tool it actually is.
+pub fn process_args(pid: i32) -> Option<Vec<String>> {
+    imp::process_args(pid)
+}
+
 /// Tell the OS this is an overlay rather than an ordinary app.
 ///
 /// Separate from the window calls because it is a property of the

@@ -16,9 +16,11 @@ use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
 use overterm_core::detect::hook::HookAdapter;
 use overterm_core::detect::replay::{Dir, Event, append_event, resize_payload};
 use overterm_core::{AgentState, Detector, PtySession, SpawnConfig, StateChange};
+
+use crate::settings::Agent;
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::choreograph::Choreographer;
 
@@ -88,6 +90,11 @@ pub enum PtyEvent {
     Exited {
         code: Option<u32>,
     },
+    /// A different program owns this session's terminal now, so the tab
+    /// should say something else.
+    AgentChanged {
+        agent: Agent,
+    },
 }
 
 pub struct SessionHandle {
@@ -101,11 +108,78 @@ pub struct SessionHandle {
 #[derive(Default)]
 pub struct Sessions(Mutex<HashMap<String, SessionHandle>>);
 
+/// How often the detector is given a chance to conclude something during
+/// silence.
+const TICK_MS: u64 = 100;
+
+/// How many of those ticks pass between asking what is running in a
+/// session. Once a second: it is a question about a person starting and
+/// leaving programs, so asking ten times a second buys nothing.
+const IDENTIFY_EVERY: u32 = 10;
+
+/// What to call whatever currently owns this session's terminal.
+///
+/// A session is a shell, and the shell runs other programs in it, so this
+/// changes as the user starts and leaves things. It is the shell's own
+/// name at a prompt and the agent's while one is running, which is what
+/// makes it a way to tell what a session is doing without the program
+/// having to cooperate.
+fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
+    let (pid, reports_itself) = {
+        let sessions = app.state::<Sessions>();
+        let sessions = sessions.0.lock().unwrap();
+        let handle = sessions.get(session_id)?;
+        (
+            handle.session.foreground_pid()?,
+            handle.detector.lock().unwrap().has_precise_source(),
+        )
+    };
+    // The lock is dropped before this: reading the settings file and
+    // asking the kernel about a process both take longer than any other
+    // session should have to wait to report a state change.
+    // The path rather than the process name. A file name is not always a
+    // name: Claude Code installs its executable as the bare version
+    // number, so the process is called something like 2.1.250 and only
+    // the path it sits in says what it is.
+    let path = crate::platform::process_path(pid).or_else(|| crate::platform::process_name(pid))?;
+    // Most of these tools are npm packages, so the program on the
+    // terminal is node and only the script path it was handed says which
+    // tool it is. Without this every one of them is called "node".
+    let args = crate::platform::process_args(pid).unwrap_or_default();
+    let settings = crate::settings::load();
+
+    // The same lookup answers both questions. Knowing which program owns
+    // the terminal is what lets the fallback detector look for the right
+    // thing on screen, and looking for the wrong thing is worse than
+    // looking for nothing: between batches of output an agent's cursor
+    // rests in its input box, and without a pattern that holds the state
+    // the window decides the turn ended and comes back mid-answer.
+    let profile = settings.profile_for(&path, &args);
+    {
+        let sessions = app.state::<Sessions>();
+        let sessions = sessions.0.lock().unwrap();
+        if let Some(handle) = sessions.get(session_id) {
+            handle.detector.lock().unwrap().set_profile(&profile);
+        }
+    }
+
+    let agent = settings.label_for(&path, &args);
+    // A program writing our markers is Claude Code, exactly, because
+    // nothing else has them installed. That outranks anything read off a
+    // path, and it is what covers a tool whose executable is named after
+    // something other than itself.
+    if reports_itself && agent.icon.is_none() {
+        return Some(settings.label_for("claude", &[]));
+    }
+    Some(agent)
+}
+
 /// Report a batch of transitions: the overlay reacts to them, and the
 /// frontend shows what the detector concluded.
 fn emit_changes(
     app: &AppHandle,
     choreo: &Choreographer,
+    session_id: &str,
     events: &Channel<PtyEvent>,
     changes: Vec<StateChange>,
 ) {
@@ -114,7 +188,7 @@ fn emit_changes(
             state: change.to,
             cause: format!("{:?}", change.cause),
         });
-        choreo.on_state_change(app, &change);
+        choreo.on_state_change(app, session_id, &change);
     }
 }
 
@@ -168,8 +242,9 @@ pub fn spawn_session(
     // before it hides the terminal.
     {
         let detector = detector.clone();
-        choreo.set_work_check(
+        choreo.add_session(
             &app,
+            &id,
             Arc::new(move || detector.lock().unwrap().is_working(Instant::now())),
         );
     }
@@ -187,6 +262,7 @@ pub fn spawn_session(
 
     // Reader: PTY output to the webview and the detector.
     {
+        let session_id = id.clone();
         let detector = detector.clone();
         let alive = alive.clone();
         let events = on_event.clone();
@@ -213,30 +289,47 @@ pub fn spawn_session(
                         {
                             break; // webview went away
                         }
-                        emit_changes(&app, &choreo, &events, changes);
+                        emit_changes(&app, &choreo, &session_id, &events, changes);
                         // After the transitions, for the same reason the
                         // keystroke path does it last.
                         if submitted {
-                            choreo.on_submit(&app);
+                            choreo.on_submit(&app, &session_id);
                         }
                     }
                 }
             }
             alive.store(false, Ordering::Relaxed);
+            // The window stops holding itself open on this session's
+            // behalf. Without this a session that exited mid-turn would
+            // keep the terminal from ever collapsing again.
+            choreo.remove_session(&session_id);
             let code = output.child.wait().ok().map(|status| status.exit_code());
             let _ = events.send(PtyEvent::Exited { code });
         });
     }
 
-    // Ticker: lets quiescence conclusions fire while the PTY is silent.
+    // Ticker: lets quiescence conclusions fire while the PTY is silent,
+    // and keeps an eye on what is running in the session.
     {
+        let ticker_id = id.clone();
         let alive = alive.clone();
         let choreo = choreo.inner().clone();
         std::thread::spawn(move || {
+            let mut ticks = 0u32;
+            let mut agent: Option<Agent> = None;
             while alive.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(TICK_MS));
                 let changes = detector.lock().unwrap().tick(Instant::now());
-                emit_changes(&app, &choreo, &on_event, changes);
+                emit_changes(&app, &choreo, &ticker_id, &on_event, changes);
+
+                ticks += 1;
+                if ticks.is_multiple_of(IDENTIFY_EVERY)
+                    && let Some(next) = identify(&app, &ticker_id)
+                    && Some(&next) != agent.as_ref()
+                {
+                    agent = Some(next.clone());
+                    let _ = on_event.send(PtyEvent::AgentChanged { agent: next });
+                }
             }
         });
     }
@@ -263,7 +356,7 @@ pub fn write_pty(
         let changes = detector.feed_input(data.as_bytes(), now);
         (changes, detector.precise_source_active(now))
     };
-    emit_changes(&app, &choreo, &handle.events, changes);
+    emit_changes(&app, &choreo, &session_id, &handle.events, changes);
     let written = handle
         .session
         .write(data.as_bytes())
@@ -275,7 +368,7 @@ pub fn write_pty(
     // Scheduled after the transitions above so it is the collapse that
     // survives, not one they cancelled.
     if !precise && (data.contains('\r') || data.contains('\n')) {
-        choreo.on_submit(&app);
+        choreo.on_submit(&app, &session_id);
     }
     written
 }
@@ -297,13 +390,18 @@ pub fn resize_pty(
 }
 
 #[tauri::command]
-pub fn kill_session(session_id: String, sessions: State<'_, Sessions>) -> Result<(), String> {
+pub fn kill_session(
+    session_id: String,
+    sessions: State<'_, Sessions>,
+    choreo: State<'_, Choreographer>,
+) -> Result<(), String> {
     let mut sessions = sessions.0.lock().unwrap();
     // Removing the session drops the PTY master too, so the reader thread
     // unblocks and the exit event fires.
     match sessions.remove(&session_id) {
         Some(mut handle) => {
             handle.alive.store(false, Ordering::Relaxed);
+            choreo.remove_session(&session_id);
             handle.session.kill().map_err(|e| e.to_string())
         }
         None => Ok(()),

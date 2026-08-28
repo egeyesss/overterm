@@ -52,6 +52,117 @@ where
         .map_err(|e| e.to_string())
 }
 
+/// Name of the program running as `pid`, if it is still there.
+///
+/// `proc_name` is asked directly rather than shelling out to `ps`,
+/// because this is asked once a second per session and an app that
+/// spawns a process on a timer has no business calling itself
+/// lightweight.
+///
+/// The answer is the executable's name, so it is `claude`, `zsh` or
+/// `nvim`, and it needs no cooperation from the program itself. Two
+/// things it cannot do: the kernel truncates it to sixteen characters,
+/// and a tool that runs through an interpreter reports the interpreter,
+/// so a CLI shipped as a script shows up as `node` or `python`. The
+/// marker a hooked program writes is what covers that case exactly.
+pub fn process_path(pid: i32) -> Option<String> {
+    // PROC_PIDPATHINFO_MAXSIZE. Written out rather than pulled from a
+    // header so the buffer and the constant cannot disagree.
+    let mut buf = [0u8; 4096];
+
+    // Safety: the buffer is ours and the length passed is its real one.
+    // A pid that has gone returns zero without writing anything.
+    let written = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    let path = std::str::from_utf8(&buf[..written as usize]).ok()?;
+    (!path.is_empty()).then(|| path.to_string())
+}
+
+/// The command line of the process running as `pid`.
+///
+/// Needed because a lot of these tools are npm packages, so the program
+/// on the terminal is `node` and the only thing naming the tool is the
+/// script path it was given. Reading the executable alone labels every
+/// one of them `node`.
+///
+/// `KERN_PROCARGS2` hands back a block laid out as the argument count,
+/// then the executable path, then padding, then that many NUL-separated
+/// arguments, then the environment. Only the arguments are wanted, and
+/// the environment is deliberately not walked into: it belongs to the
+/// user and holds their secrets.
+pub fn process_args(pid: i32) -> Option<Vec<String>> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size: usize = 0;
+
+    // Safety: asking with a null buffer only reports how big one has to
+    // be, which is the documented way to size this call.
+    let sized = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            std::ptr::null_mut(),
+            &raw mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if sized != 0 || size == 0 {
+        return None;
+    }
+
+    let mut buf = vec![0u8; size];
+    // Safety: the buffer is ours and `size` describes it. A process that
+    // has gone, or one owned by somebody else, fails rather than writing.
+    let ok = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            buf.as_mut_ptr().cast(),
+            &raw mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ok != 0 {
+        return None;
+    }
+    buf.truncate(size);
+
+    let argc = u32::from_ne_bytes(buf.get(..4)?.try_into().ok()?) as usize;
+    let mut rest = buf.get(4..)?.splitn(2, |b| *b == 0).nth(1)?;
+    // Padding between the executable path and the first argument.
+    while rest.first() == Some(&0) {
+        rest = &rest[1..];
+    }
+
+    Some(
+        rest.split(|b| *b == 0)
+            .take(argc)
+            .filter_map(|arg| std::str::from_utf8(arg).ok())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+pub fn process_name(pid: i32) -> Option<String> {
+    // Long enough for the truncated name the kernel returns, with room
+    // to spare rather than a number worked out from a header.
+    let mut buf = [0u8; 256];
+
+    // Safety: the buffer is ours, and the length passed is its real one.
+    // A pid that has gone returns zero without writing anything.
+    let written = unsafe { libc::proc_name(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+
+    let name = std::str::from_utf8(&buf[..written as usize]).ok()?;
+    let name = name.trim_end_matches('\0').trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// Fade the whole window, chrome and terminal together.
 ///
 /// `alpha` is 0.0 to 1.0. AppKit composites the window at this alpha, so

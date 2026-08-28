@@ -8,6 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use overterm_core::choreo::{ChoreoConfig, Cues};
+use overterm_core::detect::Profile;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
@@ -63,7 +65,80 @@ pub struct Settings {
     pub window: WindowSettings,
     pub cues: CueSettings,
     pub terminal: TerminalSettings,
+
+    /// Extra agents, keyed on the name of the program running in a
+    /// session. Empty by default and merged over the built-in list below,
+    /// so adding one of your own does not silently drop the ones that
+    /// ship with the app.
+    pub agents: Vec<AgentProfile>,
 }
+
+/// What OverTerm knows about one command it might find in a session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProfile {
+    /// Process name to match, as the operating system reports it.
+    #[serde(rename = "match")]
+    pub program: String,
+    /// What the tab says when it has no icon. Kept short: the rail is
+    /// narrow, and anything long is cut off.
+    pub label: String,
+
+    /// A single character to show instead of the label. The rail has room
+    /// for one glyph and not for a word.
+    #[serde(default)]
+    pub icon: Option<String>,
+
+    /// Colour for that glyph, as CSS. Left out means the ordinary text
+    /// colour.
+    #[serde(default)]
+    pub color: Option<String>,
+
+    /// What this program puts on screen for as long as it is working.
+    ///
+    /// The one that matters most. Between batches of output an agent's
+    /// cursor rests in its input box and the screen looks exactly like a
+    /// finished prompt, so without something to hold the state the window
+    /// concludes the turn ended and comes back mid-answer. Claude Code
+    /// shows "esc to interrupt"; Gemini CLI shows "esc to cancel".
+    ///
+    /// Left out means the built-in default, which is what a plain shell
+    /// wants.
+    #[serde(default)]
+    pub busy_pattern: Option<String>,
+
+    /// What a row looks like when this program is waiting for input.
+    #[serde(default)]
+    pub prompt_pattern: Option<String>,
+}
+
+/// The agents that ship with the app.
+///
+/// Deliberately short. Anything else is two lines in a config file, and
+/// guessing at the process names of tools nobody here has run is how you
+/// end up shipping a mapping that is quietly wrong.
+/// Agents recognised out of the box: name to match, label, colour, and
+/// what the program puts on screen for as long as it is working.
+///
+/// The colour is the one the tool draws itself in, so a tab reads as the
+/// same thing as the terminal underneath it.
+///
+/// A busy pattern is only filled in where the wording is actually known.
+/// Guessing one is worse than leaving it out: a pattern that never
+/// matches reads as support while the window quietly decides every turn
+/// ended early. Anything left as `None` falls back to the default and can
+/// be filled in from a config file by whoever runs that tool.
+const BUILTIN_AGENTS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("claude", "Claude", "#d97757", Some("esc to interrupt")),
+    // Wording taken from a real transcript, which reads
+    // "Awaiting Further Direction (esc to cancel, 40s)".
+    ("gemini", "Gemini", "#4285f4", Some("esc to cancel")),
+    ("codex", "Codex", "#10a37f", None),
+    ("aider", "Aider", "#14b8a6", None),
+    ("opencode", "opencode", "#f59e0b", None),
+    ("kimi", "Kimi", "#1f1f1f", None),
+    ("ollama", "Ollama", "#c8c8c8", None),
+    ("antigravity", "Antigravity", "#4285f4", None),
+];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the
 /// terminal; nothing on this side acts on them.
@@ -149,6 +224,7 @@ impl Default for Settings {
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
+            agents: Vec::new(),
         }
     }
 }
@@ -160,6 +236,129 @@ impl Settings {
     /// assume the number in it is sensible.
     pub fn alpha(&self) -> f64 {
         f64::from(self.opacity.clamp(MIN_OPACITY, MAX_OPACITY)) / 100.0
+    }
+
+    /// What to call a session running `program`.
+    ///
+    /// The user's own entries are checked first so one of them can
+    /// correct a built-in that has gone stale, and an unknown program is
+    /// its own label: a session sitting at a shell should say `zsh`
+    /// rather than nothing at all.
+    /// Most of these tools are npm packages, so the program on the
+    /// terminal is `node` and the only thing naming the tool is the
+    /// script path it was handed. `args` is that command line; an empty
+    /// one just means the executable has to speak for itself.
+    pub fn label_for(&self, path: &str, args: &[String]) -> Agent {
+        match self.match_command(path, args) {
+            Some(agent) => agent,
+            // Not an agent anybody has described, so it speaks for
+            // itself. A tab saying zsh is more use than a blank one.
+            None => Agent {
+                id: String::new(),
+                label: basename(path).to_string(),
+                icon: None,
+                color: None,
+            },
+        }
+    }
+
+    /// Try the executable first, then the arguments it was given.
+    ///
+    /// In that order on purpose: a real binary naming itself is better
+    /// evidence than a path that happens to appear on a command line.
+    /// Only arguments that look like paths are considered, so a prompt
+    /// typed on the command line cannot rename the tab.
+    fn match_command(&self, path: &str, args: &[String]) -> Option<Agent> {
+        self.match_program(path).or_else(|| {
+            args.iter()
+                .skip(1)
+                .filter(|arg| arg.contains('/'))
+                .find_map(|arg| self.match_program(arg))
+        })
+    }
+
+    /// Find the profile for an executable path, if there is one.
+    ///
+    /// The file name is tried first, then the directories above it,
+    /// nearest first. That second pass is not tidiness: Claude Code
+    /// installs its executable as the bare version number, so the file is
+    /// called `2.1.250` and the only thing that says what it is is the
+    /// `claude` directory holding it.
+    fn match_program(&self, path: &str) -> Option<Agent> {
+        // Walked from the file name outwards and stopped at the first
+        // hit, so a match close to the executable beats one further up.
+        // Bounded so this cannot reach out into a home directory that
+        // happens to share a name with an agent.
+        let candidates = path
+            .rsplit('/')
+            .filter(|part| !part.is_empty())
+            .take(MATCH_DEPTH);
+
+        for part in candidates {
+            let part = trim_suffixes(part);
+            if let Some(user) = self.agents.iter().find(|a| a.program == part) {
+                return Some(Agent {
+                    id: user.program.clone(),
+                    label: user.label.clone(),
+                    icon: user.icon.clone(),
+                    color: user.color.clone(),
+                });
+            }
+            if let Some((name, label, color, _)) =
+                BUILTIN_AGENTS.iter().find(|(name, ..)| *name == part)
+            {
+                return Some(Agent {
+                    id: (*name).to_string(),
+                    label: (*label).to_string(),
+                    icon: None,
+                    color: Some((*color).to_string()),
+                });
+            }
+        }
+        None
+    }
+
+    /// The screen patterns to look for while `program` is running.
+    ///
+    /// A program nobody has a profile for gets an empty profile, which
+    /// means the built-in defaults. That is the right answer for a shell
+    /// and a guess for anything else, which is what a profile is for.
+    pub fn profile_for(&self, path: &str, args: &[String]) -> Profile {
+        let direct = self.profile_from_path(path);
+        if direct.busy_pattern.is_some() || direct.prompt_pattern.is_some() {
+            return direct;
+        }
+        args.iter()
+            .skip(1)
+            .filter(|arg| arg.contains('/'))
+            .map(|arg| self.profile_from_path(arg))
+            .find(|p| p.busy_pattern.is_some() || p.prompt_pattern.is_some())
+            .unwrap_or_default()
+    }
+
+    fn profile_from_path(&self, path: &str) -> Profile {
+        let parts: Vec<&str> = path
+            .rsplit('/')
+            .filter(|part| !part.is_empty())
+            .take(MATCH_DEPTH)
+            .collect();
+
+        for part in &parts {
+            let part = trim_suffixes(part);
+            if let Some(user) = self.agents.iter().find(|a| a.program == part) {
+                return Profile {
+                    busy_pattern: compile(user.busy_pattern.as_deref(), "busy_pattern", part),
+                    prompt_pattern: compile(user.prompt_pattern.as_deref(), "prompt_pattern", part),
+                };
+            }
+            if let Some((_, _, _, busy)) = BUILTIN_AGENTS.iter().find(|(name, ..)| *name == part) {
+                return Profile {
+                    busy_pattern: compile(*busy, "busy_pattern", part),
+                    prompt_pattern: None,
+                };
+            }
+        }
+        Profile::default()
     }
 
     /// The stored preferences as the rules engine wants them.
@@ -203,6 +402,68 @@ pub fn hotkey_or_default(chord: &str) -> Shortcut {
         eprintln!("[settings] {e}; using {DEFAULT_HOTKEY}");
         parse_hotkey(DEFAULT_HOTKEY).expect("the built-in default parses")
     })
+}
+
+/// How far up an executable's path to look for a name we know.
+///
+/// Four is enough for the versioned layout Claude Code uses and short
+/// enough that it cannot reach a home directory: matching `claude` in
+/// `/Users/claude/bin/thing` would name the wrong program.
+const MATCH_DEPTH: usize = 4;
+
+/// What a tab shows for a session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Agent {
+    /// The matched program name, or empty when nothing matched. The
+    /// frontend keys its drawn marks off this, so renaming an agent's
+    /// label in the settings file does not cost it its icon.
+    pub id: String,
+    pub label: String,
+    /// One glyph, used when there is no drawn mark for this id.
+    pub icon: Option<String>,
+    /// Colour for the icon, as CSS.
+    pub color: Option<String>,
+}
+
+/// Reduce a path component to the name of the tool inside it.
+///
+/// npm packages are published as `gemini-cli` and installed into a
+/// directory of that name, and the same convention gives `something-cli`
+/// and `something-code`. Matching only the exact name would miss every
+/// one of them.
+fn trim_suffixes(part: &str) -> &str {
+    for suffix in ["-cli", "-code", "-cli.js", ".js"] {
+        if let Some(stem) = part.strip_suffix(suffix)
+            && !stem.is_empty()
+        {
+            return stem;
+        }
+    }
+    part
+}
+
+fn basename(path: &str) -> &str {
+    path.rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(path)
+}
+
+/// Compile a pattern from the settings file, reporting a bad one once.
+///
+/// A pattern that does not compile falls back to the default rather than
+/// stopping anything. These come from a file people edit by hand, and a
+/// typo in one should cost that agent its profile, not the session.
+fn compile(pattern: Option<&str>, field: &str, program: &str) -> Option<Regex> {
+    let pattern = pattern?;
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(e) => {
+            eprintln!(
+                "[settings] {program} {field} is not a valid pattern ({e}); using the default"
+            );
+            None
+        }
+    }
 }
 
 /// Where the settings file lives.
@@ -385,6 +646,15 @@ mod tests {
                 font_size: 16,
                 ..TerminalSettings::default()
             },
+            agents: vec![AgentProfile {
+                program: "kimi".into(),
+                label: "K3".into(),
+                icon: None,
+
+                color: None,
+                busy_pattern: Some("esc to stop".into()),
+                prompt_pattern: None,
+            }],
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
@@ -421,6 +691,247 @@ mod tests {
                 settings.alpha()
             );
         }
+    }
+
+    #[test]
+    fn a_known_agent_gets_its_name_and_anything_else_gets_its_own() {
+        let settings = Settings::default();
+        assert_eq!(
+            settings.label_for("/usr/local/bin/claude", &[]).label,
+            "Claude"
+        );
+        // A shell is not an agent, and a tab saying zsh is more use than
+        // a tab saying nothing.
+        assert_eq!(settings.label_for("/bin/zsh", &[]).label, "zsh");
+    }
+
+    #[test]
+    fn adding_an_agent_does_not_drop_the_built_in_ones() {
+        // The trap this is guarding: a list in a config file replaces the
+        // default list wholesale, so somebody adding one entry would have
+        // quietly lost Claude.
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "kimi".into(),
+                label: "K3".into(),
+                icon: None,
+
+                color: None,
+                busy_pattern: None,
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        assert_eq!(settings.label_for("/opt/kimi", &[]).label, "K3");
+        assert_eq!(settings.label_for("/usr/bin/claude", &[]).label, "Claude");
+    }
+
+    #[test]
+    fn a_users_entry_can_correct_a_built_in_one() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "claude".into(),
+                label: "CC".into(),
+                icon: None,
+
+                color: None,
+                busy_pattern: None,
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        assert_eq!(settings.label_for("/usr/bin/claude", &[]).label, "CC");
+    }
+
+    #[test]
+    fn the_built_in_claude_profile_knows_what_it_looks_like_working() {
+        let profile = Settings::default().profile_for("/usr/bin/claude", &[]);
+        let busy = profile.busy_pattern.expect("claude ships with one");
+        assert!(busy.is_match("  esc to interrupt  "));
+    }
+
+    #[test]
+    fn a_shell_gets_no_patterns_of_its_own() {
+        // Nothing to hold: a shell has no status line saying it is busy,
+        // and claiming otherwise would be worse than saying nothing.
+        let profile = Settings::default().profile_for("/bin/zsh", &[]);
+        assert!(profile.busy_pattern.is_none());
+        assert!(profile.prompt_pattern.is_none());
+    }
+
+    #[test]
+    fn an_agent_of_your_own_gets_its_pattern_used() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "gemini".into(),
+                label: "Gemini".into(),
+                icon: None,
+
+                color: None,
+                busy_pattern: Some("esc to cancel".into()),
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        let profile = settings.profile_for("/usr/local/bin/gemini", &[]);
+        let busy = profile.busy_pattern.expect("configured");
+        assert!(busy.is_match("Awaiting Further Direction (esc to cancel, 40s)"));
+        assert!(
+            !busy.is_match("esc to interrupt"),
+            "the other agent's wording must not match"
+        );
+    }
+
+    #[test]
+    fn a_pattern_that_does_not_compile_costs_the_profile_and_nothing_else() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "broken".into(),
+                label: "Broken".into(),
+                icon: None,
+
+                color: None,
+                busy_pattern: Some("(unclosed".into()),
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        // Falls back rather than panicking: these come from a file people
+        // edit by hand, and a typo should cost that agent its profile
+        // rather than the session it is running in.
+        assert!(
+            settings
+                .profile_for("/bin/broken", &[])
+                .busy_pattern
+                .is_none()
+        );
+        assert_eq!(settings.label_for("/bin/broken", &[]).label, "Broken");
+    }
+
+    #[test]
+    fn an_executable_named_after_its_version_is_still_recognised() {
+        // The real layout on a machine with Claude Code installed. The
+        // executable is the bare version number, so the process is called
+        // 2.1.250 and the tab said so until this looked at the path.
+        let settings = Settings::default();
+        let path = "/Users/someone/.local/share/claude/versions/2.1.250";
+        let agent = settings.label_for(path, &[]);
+        assert_eq!(agent.label, "Claude");
+        assert_eq!(agent.id, "claude", "the id is what the drawn mark keys off");
+        assert!(agent.color.is_some(), "a known agent gets its own colour");
+        assert!(
+            settings.profile_for(path, &[]).busy_pattern.is_some(),
+            "and its detection patterns, which the version name would have missed"
+        );
+    }
+
+    #[test]
+    fn the_agents_that_ship_are_all_usable() {
+        let settings = Settings::default();
+        for (program, label, ..) in BUILTIN_AGENTS {
+            let agent = settings.label_for(&format!("/usr/local/bin/{program}"), &[]);
+            assert_eq!(&agent.label, label);
+            assert_eq!(&agent.id, program, "the id keys the drawn mark");
+            assert!(agent.color.is_some(), "{program} has no colour");
+        }
+    }
+
+    #[test]
+    fn every_pattern_that_ships_compiles() {
+        // These are written by hand in the table above, so a typo would
+        // otherwise only turn up as an agent silently losing its profile.
+        let settings = Settings::default();
+        for (program, _, _, busy) in BUILTIN_AGENTS {
+            let profile = settings.profile_for(&format!("/usr/local/bin/{program}"), &[]);
+            assert_eq!(
+                profile.busy_pattern.is_some(),
+                busy.is_some(),
+                "{program} pattern did not survive being compiled"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tool_running_through_node_is_named_after_the_tool() {
+        // The case that made every npm-installed agent show up as "node":
+        // the program on the terminal is the interpreter, and only the
+        // script path it was handed says which tool it is.
+        let settings = Settings::default();
+        let args = [
+            "node".to_string(),
+            "/Users/someone/.nvm/versions/node/v22.3.0/lib/node_modules/@google/gemini-cli/dist/index.js"
+                .to_string(),
+        ];
+        let agent = settings.label_for("/usr/local/bin/node", &args);
+        assert_eq!(agent.label, "Gemini");
+        assert_eq!(agent.id, "gemini");
+        assert!(
+            settings
+                .profile_for("/usr/local/bin/node", &args)
+                .busy_pattern
+                .is_some(),
+            "it needs its detection patterns as well as its name"
+        );
+    }
+
+    #[test]
+    fn a_real_binary_outranks_anything_on_the_command_line() {
+        let settings = Settings::default();
+        let args = ["claude".to_string(), "/tmp/gemini/notes".to_string()];
+        assert_eq!(settings.label_for("/usr/bin/claude", &args).label, "Claude");
+    }
+
+    #[test]
+    fn an_argument_that_is_not_a_path_cannot_rename_a_tab() {
+        // Somebody typing an agent's name into a prompt should not make
+        // the tab claim to be running it.
+        let settings = Settings::default();
+        let args = ["node".to_string(), "tell me about gemini".to_string()];
+        assert_eq!(
+            settings.label_for("/usr/local/bin/node", &args).label,
+            "node"
+        );
+    }
+
+    #[test]
+    fn the_npm_naming_convention_still_matches() {
+        let settings = Settings::default();
+        for path in [
+            "/opt/node_modules/gemini-cli/index.js",
+            "/opt/@google/gemini-cli/dist/cli.js",
+        ] {
+            assert_eq!(settings.label_for(path, &[]).label, "Gemini", "for {path}");
+        }
+    }
+
+    #[test]
+    fn the_name_nearest_the_executable_wins() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "inner".into(),
+                label: "Inner".into(),
+                icon: None,
+
+                color: None,
+                busy_pattern: None,
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        assert_eq!(
+            settings.label_for("/opt/claude/inner/run", &[]).label,
+            "Inner"
+        );
+    }
+
+    #[test]
+    fn a_home_directory_sharing_a_name_does_not_claim_the_program() {
+        // Reaching far enough up any path eventually finds something, so
+        // the search is bounded. Somebody whose account is named after an
+        // agent must not have every program they run labelled as it.
+        let settings = Settings::default();
+        let path = "/Users/claude/projects/deep/nested/build/output/thing";
+        assert_eq!(settings.label_for(path, &[]).label, "thing");
     }
 
     #[test]
