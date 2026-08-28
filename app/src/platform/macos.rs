@@ -65,6 +65,21 @@ where
 /// and a tool that runs through an interpreter reports the interpreter,
 /// so a CLI shipped as a script shows up as `node` or `python`. The
 /// marker a hooked program writes is what covers that case exactly.
+pub fn process_path(pid: i32) -> Option<String> {
+    // PROC_PIDPATHINFO_MAXSIZE. Written out rather than pulled from a
+    // header so the buffer and the constant cannot disagree.
+    let mut buf = [0u8; 4096];
+
+    // Safety: the buffer is ours and the length passed is its real one.
+    // A pid that has gone returns zero without writing anything.
+    let written = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    let path = std::str::from_utf8(&buf[..written as usize]).ok()?;
+    (!path.is_empty()).then(|| path.to_string())
+}
+
 pub fn process_name(pid: i32) -> Option<String> {
     // Long enough for the truncated name the kernel returns, with room
     // to spare rather than a number worked out from a header.

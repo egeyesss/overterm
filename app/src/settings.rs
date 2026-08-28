@@ -79,8 +79,19 @@ pub struct AgentProfile {
     /// Process name to match, as the operating system reports it.
     #[serde(rename = "match")]
     pub program: String,
-    /// What the tab says. Kept short: the rail is narrow.
+    /// What the tab says when it has no icon. Kept short: the rail is
+    /// narrow, and anything long is cut off.
     pub label: String,
+
+    /// A single character to show instead of the label. The rail has room
+    /// for one glyph and not for a word.
+    #[serde(default)]
+    pub icon: Option<String>,
+
+    /// Colour for that glyph, as CSS. Left out means the ordinary text
+    /// colour.
+    #[serde(default)]
+    pub color: Option<String>,
 
     /// What this program puts on screen for as long as it is working.
     ///
@@ -105,8 +116,12 @@ pub struct AgentProfile {
 /// Deliberately short. Anything else is two lines in a config file, and
 /// guessing at the process names of tools nobody here has run is how you
 /// end up shipping a mapping that is quietly wrong.
-const BUILTIN_AGENTS: &[(&str, &str, Option<&str>)] =
-    &[("claude", "Claude", Some("esc to interrupt"))];
+/// Name to match, label, colour, and what it looks like while working.
+///
+/// The colour is the one the tool draws itself in, so a tab reads as the
+/// same thing as the terminal underneath it.
+const BUILTIN_AGENTS: &[(&str, &str, &str, Option<&str>)] =
+    &[("claude", "Claude", "#d97757", Some("esc to interrupt"))];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the
 /// terminal; nothing on this side acts on them.
@@ -212,15 +227,58 @@ impl Settings {
     /// correct a built-in that has gone stale, and an unknown program is
     /// its own label: a session sitting at a shell should say `zsh`
     /// rather than nothing at all.
-    pub fn label_for(&self, program: &str) -> String {
-        if let Some(profile) = self.agents.iter().find(|a| a.program == program) {
-            return profile.label.clone();
+    pub fn label_for(&self, path: &str) -> Agent {
+        match self.match_program(path) {
+            Some(agent) => agent,
+            // Not an agent anybody has described, so it speaks for
+            // itself. A tab saying zsh is more use than a blank one.
+            None => Agent {
+                id: String::new(),
+                label: basename(path).to_string(),
+                icon: None,
+                color: None,
+            },
         }
-        BUILTIN_AGENTS
-            .iter()
-            .find(|(name, ..)| *name == program)
-            .map(|(_, label, _)| (*label).to_string())
-            .unwrap_or_else(|| program.to_string())
+    }
+
+    /// Find the profile for an executable path, if there is one.
+    ///
+    /// The file name is tried first, then the directories above it,
+    /// nearest first. That second pass is not tidiness: Claude Code
+    /// installs its executable as the bare version number, so the file is
+    /// called `2.1.250` and the only thing that says what it is is the
+    /// `claude` directory holding it.
+    fn match_program(&self, path: &str) -> Option<Agent> {
+        // Walked from the file name outwards and stopped at the first
+        // hit, so a match close to the executable beats one further up.
+        // Bounded so this cannot reach out into a home directory that
+        // happens to share a name with an agent.
+        let candidates = path
+            .rsplit('/')
+            .filter(|part| !part.is_empty())
+            .take(MATCH_DEPTH);
+
+        for part in candidates {
+            if let Some(user) = self.agents.iter().find(|a| a.program == part) {
+                return Some(Agent {
+                    id: user.program.clone(),
+                    label: user.label.clone(),
+                    icon: user.icon.clone(),
+                    color: user.color.clone(),
+                });
+            }
+            if let Some((name, label, color, _)) =
+                BUILTIN_AGENTS.iter().find(|(name, ..)| *name == part)
+            {
+                return Some(Agent {
+                    id: (*name).to_string(),
+                    label: (*label).to_string(),
+                    icon: None,
+                    color: Some((*color).to_string()),
+                });
+            }
+        }
+        None
     }
 
     /// The screen patterns to look for while `program` is running.
@@ -228,21 +286,28 @@ impl Settings {
     /// A program nobody has a profile for gets an empty profile, which
     /// means the built-in defaults. That is the right answer for a shell
     /// and a guess for anything else, which is what a profile is for.
-    pub fn profile_for(&self, program: &str) -> Profile {
-        let (busy, prompt) = match self.agents.iter().find(|a| a.program == program) {
-            Some(user) => (user.busy_pattern.as_deref(), user.prompt_pattern.as_deref()),
-            None => (
-                BUILTIN_AGENTS
-                    .iter()
-                    .find(|(name, ..)| *name == program)
-                    .and_then(|(_, _, busy)| *busy),
-                None,
-            ),
-        };
-        Profile {
-            busy_pattern: compile(busy, "busy_pattern", program),
-            prompt_pattern: compile(prompt, "prompt_pattern", program),
+    pub fn profile_for(&self, path: &str) -> Profile {
+        let parts: Vec<&str> = path
+            .rsplit('/')
+            .filter(|part| !part.is_empty())
+            .take(MATCH_DEPTH)
+            .collect();
+
+        for part in &parts {
+            if let Some(user) = self.agents.iter().find(|a| a.program == *part) {
+                return Profile {
+                    busy_pattern: compile(user.busy_pattern.as_deref(), "busy_pattern", part),
+                    prompt_pattern: compile(user.prompt_pattern.as_deref(), "prompt_pattern", part),
+                };
+            }
+            if let Some((_, _, _, busy)) = BUILTIN_AGENTS.iter().find(|(name, ..)| *name == *part) {
+                return Profile {
+                    busy_pattern: compile(*busy, "busy_pattern", part),
+                    prompt_pattern: None,
+                };
+            }
         }
+        Profile::default()
     }
 
     /// The stored preferences as the rules engine wants them.
@@ -286,6 +351,33 @@ pub fn hotkey_or_default(chord: &str) -> Shortcut {
         eprintln!("[settings] {e}; using {DEFAULT_HOTKEY}");
         parse_hotkey(DEFAULT_HOTKEY).expect("the built-in default parses")
     })
+}
+
+/// How far up an executable's path to look for a name we know.
+///
+/// Four is enough for the versioned layout Claude Code uses and short
+/// enough that it cannot reach a home directory: matching `claude` in
+/// `/Users/claude/bin/thing` would name the wrong program.
+const MATCH_DEPTH: usize = 4;
+
+/// What a tab shows for a session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Agent {
+    /// The matched program name, or empty when nothing matched. The
+    /// frontend keys its drawn marks off this, so renaming an agent's
+    /// label in the settings file does not cost it its icon.
+    pub id: String,
+    pub label: String,
+    /// One glyph, used when there is no drawn mark for this id.
+    pub icon: Option<String>,
+    /// Colour for the icon, as CSS.
+    pub color: Option<String>,
+}
+
+fn basename(path: &str) -> &str {
+    path.rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(path)
 }
 
 /// Compile a pattern from the settings file, reporting a bad one once.
@@ -489,6 +581,9 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "kimi".into(),
                 label: "K3".into(),
+                icon: None,
+
+                color: None,
                 busy_pattern: Some("esc to stop".into()),
                 prompt_pattern: None,
             }],
@@ -533,10 +628,10 @@ mod tests {
     #[test]
     fn a_known_agent_gets_its_name_and_anything_else_gets_its_own() {
         let settings = Settings::default();
-        assert_eq!(settings.label_for("claude"), "Claude");
+        assert_eq!(settings.label_for("/usr/local/bin/claude").label, "Claude");
         // A shell is not an agent, and a tab saying zsh is more use than
         // a tab saying nothing.
-        assert_eq!(settings.label_for("zsh"), "zsh");
+        assert_eq!(settings.label_for("/bin/zsh").label, "zsh");
     }
 
     #[test]
@@ -548,13 +643,16 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "kimi".into(),
                 label: "K3".into(),
+                icon: None,
+
+                color: None,
                 busy_pattern: None,
                 prompt_pattern: None,
             }],
             ..Settings::default()
         };
-        assert_eq!(settings.label_for("kimi"), "K3");
-        assert_eq!(settings.label_for("claude"), "Claude");
+        assert_eq!(settings.label_for("/opt/kimi").label, "K3");
+        assert_eq!(settings.label_for("/usr/bin/claude").label, "Claude");
     }
 
     #[test]
@@ -563,17 +661,20 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "claude".into(),
                 label: "CC".into(),
+                icon: None,
+
+                color: None,
                 busy_pattern: None,
                 prompt_pattern: None,
             }],
             ..Settings::default()
         };
-        assert_eq!(settings.label_for("claude"), "CC");
+        assert_eq!(settings.label_for("/usr/bin/claude").label, "CC");
     }
 
     #[test]
     fn the_built_in_claude_profile_knows_what_it_looks_like_working() {
-        let profile = Settings::default().profile_for("claude");
+        let profile = Settings::default().profile_for("/usr/bin/claude");
         let busy = profile.busy_pattern.expect("claude ships with one");
         assert!(busy.is_match("  esc to interrupt  "));
     }
@@ -582,7 +683,7 @@ mod tests {
     fn a_shell_gets_no_patterns_of_its_own() {
         // Nothing to hold: a shell has no status line saying it is busy,
         // and claiming otherwise would be worse than saying nothing.
-        let profile = Settings::default().profile_for("zsh");
+        let profile = Settings::default().profile_for("/bin/zsh");
         assert!(profile.busy_pattern.is_none());
         assert!(profile.prompt_pattern.is_none());
     }
@@ -593,12 +694,15 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "gemini".into(),
                 label: "Gemini".into(),
+                icon: None,
+
+                color: None,
                 busy_pattern: Some("esc to cancel".into()),
                 prompt_pattern: None,
             }],
             ..Settings::default()
         };
-        let profile = settings.profile_for("gemini");
+        let profile = settings.profile_for("/usr/local/bin/gemini");
         let busy = profile.busy_pattern.expect("configured");
         assert!(busy.is_match("Awaiting Further Direction (esc to cancel, 40s)"));
         assert!(
@@ -613,6 +717,9 @@ mod tests {
             agents: vec![AgentProfile {
                 program: "broken".into(),
                 label: "Broken".into(),
+                icon: None,
+
+                color: None,
                 busy_pattern: Some("(unclosed".into()),
                 prompt_pattern: None,
             }],
@@ -621,8 +728,52 @@ mod tests {
         // Falls back rather than panicking: these come from a file people
         // edit by hand, and a typo should cost that agent its profile
         // rather than the session it is running in.
-        assert!(settings.profile_for("broken").busy_pattern.is_none());
-        assert_eq!(settings.label_for("broken"), "Broken");
+        assert!(settings.profile_for("/bin/broken").busy_pattern.is_none());
+        assert_eq!(settings.label_for("/bin/broken").label, "Broken");
+    }
+
+    #[test]
+    fn an_executable_named_after_its_version_is_still_recognised() {
+        // The real layout on a machine with Claude Code installed. The
+        // executable is the bare version number, so the process is called
+        // 2.1.250 and the tab said so until this looked at the path.
+        let settings = Settings::default();
+        let path = "/Users/someone/.local/share/claude/versions/2.1.250";
+        let agent = settings.label_for(path);
+        assert_eq!(agent.label, "Claude");
+        assert_eq!(agent.id, "claude", "the id is what the drawn mark keys off");
+        assert!(agent.color.is_some(), "a known agent gets its own colour");
+        assert!(
+            settings.profile_for(path).busy_pattern.is_some(),
+            "and its detection patterns, which the version name would have missed"
+        );
+    }
+
+    #[test]
+    fn the_name_nearest_the_executable_wins() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "inner".into(),
+                label: "Inner".into(),
+                icon: None,
+
+                color: None,
+                busy_pattern: None,
+                prompt_pattern: None,
+            }],
+            ..Settings::default()
+        };
+        assert_eq!(settings.label_for("/opt/claude/inner/run").label, "Inner");
+    }
+
+    #[test]
+    fn a_home_directory_sharing_a_name_does_not_claim_the_program() {
+        // Reaching far enough up any path eventually finds something, so
+        // the search is bounded. Somebody whose account is named after an
+        // agent must not have every program they run labelled as it.
+        let settings = Settings::default();
+        let path = "/Users/claude/projects/deep/nested/build/output/thing";
+        assert_eq!(settings.label_for(path).label, "thing");
     }
 
     #[test]

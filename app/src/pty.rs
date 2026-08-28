@@ -16,6 +16,8 @@ use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
 use overterm_core::detect::hook::HookAdapter;
 use overterm_core::detect::replay::{Dir, Event, append_event, resize_payload};
 use overterm_core::{AgentState, Detector, PtySession, SpawnConfig, StateChange};
+
+use crate::settings::Agent;
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -91,7 +93,7 @@ pub enum PtyEvent {
     /// A different program owns this session's terminal now, so the tab
     /// should say something else.
     AgentChanged {
-        label: String,
+        agent: Agent,
     },
 }
 
@@ -122,16 +124,24 @@ const IDENTIFY_EVERY: u32 = 10;
 /// name at a prompt and the agent's while one is running, which is what
 /// makes it a way to tell what a session is doing without the program
 /// having to cooperate.
-fn identify(app: &AppHandle, session_id: &str) -> Option<String> {
-    let pid = {
+fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
+    let (pid, reports_itself) = {
         let sessions = app.state::<Sessions>();
         let sessions = sessions.0.lock().unwrap();
-        sessions.get(session_id)?.session.foreground_pid()?
+        let handle = sessions.get(session_id)?;
+        (
+            handle.session.foreground_pid()?,
+            handle.detector.lock().unwrap().has_precise_source(),
+        )
     };
     // The lock is dropped before this: reading the settings file and
     // asking the kernel about a process both take longer than any other
     // session should have to wait to report a state change.
-    let program = crate::platform::process_name(pid)?;
+    // The path rather than the process name. A file name is not always a
+    // name: Claude Code installs its executable as the bare version
+    // number, so the process is called something like 2.1.250 and only
+    // the path it sits in says what it is.
+    let path = crate::platform::process_path(pid).or_else(|| crate::platform::process_name(pid))?;
     let settings = crate::settings::load();
 
     // The same lookup answers both questions. Knowing which program owns
@@ -140,7 +150,7 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<String> {
     // looking for nothing: between batches of output an agent's cursor
     // rests in its input box, and without a pattern that holds the state
     // the window decides the turn ended and comes back mid-answer.
-    let profile = settings.profile_for(&program);
+    let profile = settings.profile_for(&path);
     {
         let sessions = app.state::<Sessions>();
         let sessions = sessions.0.lock().unwrap();
@@ -149,7 +159,15 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<String> {
         }
     }
 
-    Some(settings.label_for(&program))
+    let agent = settings.label_for(&path);
+    // A program writing our markers is Claude Code, exactly, because
+    // nothing else has them installed. That outranks anything read off a
+    // path, and it is what covers a tool whose executable is named after
+    // something other than itself.
+    if reports_itself && agent.icon.is_none() {
+        return Some(settings.label_for("claude"));
+    }
+    Some(agent)
 }
 
 /// Report a batch of transitions: the overlay reacts to them, and the
@@ -294,7 +312,7 @@ pub fn spawn_session(
         let choreo = choreo.inner().clone();
         std::thread::spawn(move || {
             let mut ticks = 0u32;
-            let mut label = String::new();
+            let mut agent: Option<Agent> = None;
             while alive.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_millis(TICK_MS));
                 let changes = detector.lock().unwrap().tick(Instant::now());
@@ -303,10 +321,10 @@ pub fn spawn_session(
                 ticks += 1;
                 if ticks.is_multiple_of(IDENTIFY_EVERY)
                     && let Some(next) = identify(&app, &ticker_id)
-                    && next != label
+                    && Some(&next) != agent.as_ref()
                 {
-                    label = next.clone();
-                    let _ = on_event.send(PtyEvent::AgentChanged { label: next });
+                    agent = Some(next.clone());
+                    let _ = on_event.send(PtyEvent::AgentChanged { agent: next });
                 }
             }
         });

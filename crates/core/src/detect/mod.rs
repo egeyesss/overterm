@@ -260,6 +260,17 @@ impl Detector {
         }
     }
 
+    /// Whether a program that reports its own events owns this terminal.
+    ///
+    /// Unlike `precise_source_active` this has no timeout: the question is
+    /// "what is running", not "should the guesses be suppressed". Only a
+    /// program we installed hooks into writes those markers, so seeing
+    /// one identifies it exactly, which reading a process name cannot
+    /// always do.
+    pub fn has_precise_source(&self) -> bool {
+        self.precise_since.is_some()
+    }
+
     /// Whether a precise source is currently answering for this session.
     pub fn precise_source_active(&self, now: Instant) -> bool {
         self.precise_since

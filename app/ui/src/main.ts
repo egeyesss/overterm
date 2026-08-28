@@ -17,7 +17,10 @@ type PtyEvent =
   | { event: 'output'; data: { bytes: number[] } }
   | { event: 'agentStateChanged'; data: { state: AgentState; cause: string } }
   | { event: 'exited'; data: { code: number | null } }
-  | { event: 'agentChanged'; data: { label: string } };
+  | {
+      event: 'agentChanged';
+      data: { agent: { id: string; label: string; icon: string | null; color: string | null } };
+    };
 
 type Cues = { glow: boolean; sound: boolean };
 
@@ -838,10 +841,43 @@ function handleTerminalKey(event: KeyboardEvent): boolean {
   }
 }
 
-/// What a tab says. A short text label until the agent is identified.
-function setLabel(session: Session, label: string) {
-  session.tab.querySelector('.label')!.textContent = label;
-  session.tab.title = label;
+/// Longest text label a tab has room for before it is cut off.
+const TAB_LABEL_MAX = 5;
+
+/// Marks drawn for agents the app knows, keyed on the program name the
+/// backend matched. Keyed on that rather than the label so renaming an
+/// agent in the settings file does not cost it its icon.
+///
+/// Drawn here rather than shipping anybody's logo file: it is a
+/// recognisable shape in their own colour, which is what a tab needs, and
+/// the repo stays free of somebody else's brand assets.
+const MARKS: Record<string, string> = {
+  claude: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="11.22" y="2.60" width="1.55" height="9.40" rx="0.78" transform="rotate(0 12 12)"/><rect x="11.38" y="5.40" width="1.25" height="6.60" rx="0.62" transform="rotate(30 12 12)"/><rect x="11.22" y="3.80" width="1.55" height="8.20" rx="0.78" transform="rotate(60 12 12)"/><rect x="11.38" y="5.10" width="1.25" height="6.90" rx="0.62" transform="rotate(90 12 12)"/><rect x="11.22" y="2.60" width="1.55" height="9.40" rx="0.78" transform="rotate(120 12 12)"/><rect x="11.38" y="5.40" width="1.25" height="6.60" rx="0.62" transform="rotate(150 12 12)"/><rect x="11.22" y="3.80" width="1.55" height="8.20" rx="0.78" transform="rotate(180 12 12)"/><rect x="11.38" y="5.10" width="1.25" height="6.90" rx="0.62" transform="rotate(210 12 12)"/><rect x="11.22" y="2.60" width="1.55" height="9.40" rx="0.78" transform="rotate(240 12 12)"/><rect x="11.38" y="5.40" width="1.25" height="6.60" rx="0.62" transform="rotate(270 12 12)"/><rect x="11.22" y="3.80" width="1.55" height="8.20" rx="0.78" transform="rotate(300 12 12)"/><rect x="11.38" y="5.10" width="1.25" height="6.90" rx="0.62" transform="rotate(330 12 12)"/></svg>',
+};
+
+/// What a tab shows: one glyph for an agent we know, otherwise a short
+/// piece of its name.
+///
+/// The rail is narrow on purpose, so a long name is trimmed rather than
+/// allowed to spill out of its box. The full one stays in the tooltip.
+function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null }) {
+  const el = session.tab.querySelector('.label') as HTMLElement;
+  const mark = MARKS[agent.id];
+  if (mark) {
+    el.innerHTML = mark;
+  } else if (agent.icon) {
+    el.textContent = agent.icon;
+  } else {
+    el.textContent =
+      agent.label.length > TAB_LABEL_MAX
+        ? `${agent.label.slice(0, TAB_LABEL_MAX - 1)}\u2026`
+        : agent.label;
+  }
+  session.tab.classList.toggle('has-icon', Boolean(mark || agent.icon));
+  // The tool's own colour, so the tab reads as the same thing as the
+  // terminal underneath it.
+  el.style.color = agent.color ?? '';
+  session.tab.title = agent.label;
 }
 
 /// Put a session on screen and take the previous one off.
@@ -894,7 +930,7 @@ async function addSession(): Promise<void> {
   };
   sessions.push(session);
   tab.addEventListener('click', () => activate(session));
-  setLabel(session, String(sessions.length));
+  setLabel(session, { id: '', label: String(sessions.length), icon: null, color: null });
 
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
     if (active !== session) return;
@@ -914,7 +950,7 @@ async function addSession(): Promise<void> {
     } else if (msg.event === 'agentStateChanged') {
       setAgentState(session, msg.data.state, msg.data.cause);
     } else if (msg.event === 'agentChanged') {
-      setLabel(session, msg.data.label);
+      setLabel(session, msg.data.agent);
     } else {
       const code = msg.data.code ?? 'signal';
       term.write(`\r\n\x1b[90m[process exited: ${code}]\x1b[0m\r\n`);

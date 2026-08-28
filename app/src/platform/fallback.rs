@@ -41,6 +41,14 @@ pub fn process_name(_pid: i32) -> Option<String> {
     None
 }
 
+/// Ports fill this in too. Linux has it as the `/proc/<pid>/exe`
+/// symlink. It matters because a program's file name is not always its
+/// name: Claude Code installs its executable as the version number, so
+/// the path is the only thing that says what it is.
+pub fn process_path(_pid: i32) -> Option<String> {
+    None
+}
+
 /// Nothing to do: the Dock and Spaces are a macOS idea.
 pub fn make_accessory<R: Runtime>(_app: &mut App<R>) {}
 

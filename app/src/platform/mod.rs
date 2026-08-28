@@ -71,6 +71,15 @@ pub fn process_name(pid: i32) -> Option<String> {
     imp::process_name(pid)
 }
 
+/// Full path of the program running as `pid`.
+///
+/// Needed because a file name is not always a name. Claude Code installs
+/// its executable as the bare version number, so the process is called
+/// something like `2.1.250` and only the path says what it really is.
+pub fn process_path(pid: i32) -> Option<String> {
+    imp::process_path(pid)
+}
+
 /// Tell the OS this is an overlay rather than an ordinary app.
 ///
 /// Separate from the window calls because it is a property of the
