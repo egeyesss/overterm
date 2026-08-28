@@ -31,6 +31,34 @@
 
     <div id="terminal"></div>
 
+    <!-- Overlay rather than a row, so opening it does not resize the
+         terminal and reflow the agent's TUI. -->
+    <div id="find" hidden>
+      <input
+        id="find-input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="find"
+      />
+      <span id="find-count"></span>
+      <button class="icon find-prev" title="Previous match (Shift+Enter)">
+        <svg viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M6 3 3 7h6z" />
+        </svg>
+      </button>
+      <button class="icon find-next" title="Next match (Enter)">
+        <svg viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M6 9 3 5h6z" />
+        </svg>
+      </button>
+      <button class="icon find-close" title="Close (Esc)">
+        <svg viewBox="0 0 12 12" aria-hidden="true">
+          <path d="m3 3 6 6M9 3l-6 6" />
+        </svg>
+      </button>
+    </div>
+
     <!-- Compact strip shown while the agent works. -->
     <div id="bar">
       <div id="bar-top" data-tauri-drag-region>

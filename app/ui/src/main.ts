@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
@@ -44,6 +45,9 @@ term.loadAddon(fit);
 // Getting this wrong shears a TUI sideways by a column per glyph.
 term.loadAddon(new Unicode11Addon());
 term.unicode.activeVersion = '11';
+
+const search = new SearchAddon();
+term.loadAddon(search);
 
 const container = document.getElementById('terminal')!;
 term.open(container);
@@ -128,6 +132,9 @@ function applyMode(next: WindowMode) {
     // before xterm can lay anything out.
     requestAnimationFrame(() => fit.fit());
   } else {
+    // Nothing to search once the terminal is off screen, and leaving it
+    // open means it comes back with a stale query on the next expand.
+    if (!findBox.hidden) closeFind();
     showDraft();
   }
   // Keep typing flowing across an automatic switch, but only when the
@@ -157,6 +164,79 @@ for (const button of document.querySelectorAll('.icon.hide')) {
 }
 
 listen<{ mode: WindowMode }>('overterm://mode', (event) => applyMode(event.payload.mode));
+
+// Escape reaches the find bar even when the terminal has focus, which is
+// where you are when you opened it and found what you wanted.
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !findBox.hidden) closeFind();
+});
+
+// --- find ------------------------------------------------------------
+
+const findBox = document.getElementById('find')!;
+const findInput = document.getElementById('find-input') as HTMLInputElement;
+const findCount = document.getElementById('find-count')!;
+
+// Matches have to be painted by the addon: the terminal is a canvas, so
+// there is no text node to highlight. Colours come from the same palette
+// as the rest of the chrome.
+const findDecorations = {
+  matchBackground: '#3d59a1',
+  matchBorder: '#3d59a1',
+  matchOverviewRuler: '#3d59a1',
+  activeMatchBackground: '#e0af68',
+  activeMatchBorder: '#e0af68',
+  activeMatchColorOverviewRuler: '#e0af68',
+};
+
+search.onDidChangeResults(({ resultIndex, resultCount }) => {
+  findCount.textContent = resultCount ? `${resultIndex + 1}/${resultCount}` : 'none';
+  findBox.classList.toggle('no-matches', findInput.value !== '' && resultCount === 0);
+});
+
+function runFind(direction: 'next' | 'previous') {
+  const query = findInput.value;
+  if (!query) {
+    search.clearDecorations();
+    findCount.textContent = '';
+    findBox.classList.remove('no-matches');
+    return;
+  }
+  const options = { decorations: findDecorations };
+  if (direction === 'next') search.findNext(query, options);
+  else search.findPrevious(query, options);
+}
+
+function openFind() {
+  if (mode !== 'panel') return; // the terminal is not on screen in the bar
+  findBox.hidden = false;
+  findInput.select();
+  findInput.focus();
+}
+
+function closeFind() {
+  findBox.hidden = true;
+  search.clearDecorations();
+  findBox.classList.remove('no-matches');
+  term.focus();
+}
+
+findInput.addEventListener('input', () => runFind('next'));
+
+findInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    runFind(event.shiftKey ? 'previous' : 'next');
+  } else if (event.key === 'Escape') {
+    closeFind();
+  } else {
+    return;
+  }
+  event.preventDefault();
+});
+
+findBox.querySelector('.find-next')!.addEventListener('click', () => runFind('next'));
+findBox.querySelector('.find-prev')!.addEventListener('click', () => runFind('previous'));
+findBox.querySelector('.find-close')!.addEventListener('click', closeFind);
 
 // --- attention cues --------------------------------------------------
 
@@ -313,6 +393,10 @@ async function start() {
     if (event.type !== 'keydown') return true;
     if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey) {
       write(NEWLINE);
+      return false;
+    }
+    if (event.metaKey && event.key === 'f') {
+      openFind();
       return false;
     }
     return true;
