@@ -35,7 +35,14 @@
       </div>
     </header>
 
-    <div id="terminal"></div>
+    <div id="workspace">
+      <!-- One tab per session, plus the control that starts another. -->
+      <nav id="tabs">
+        <button id="tab-add" title="New session">+</button>
+      </nav>
+      <!-- One pane per session; only the active one is on screen. -->
+      <div id="terminals"></div>
+    </div>
 
     <!-- Overlay rather than a row, so opening it does not resize the
          terminal and reflow the agent's TUI. -->

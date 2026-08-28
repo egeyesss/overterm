@@ -76,15 +76,119 @@ body.attention-needs::after {
   }
 }
 
-#terminal {
+#workspace {
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+
+/* Tab rail. Vertical so a narrow overlay spends its width on the
+   terminal rather than on labels. */
+#tabs {
+  flex: none;
+  width: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.tab {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--fg);
+}
+
+.tab.active {
+  border-color: var(--busy);
+  color: var(--fg);
+}
+
+/* Per-tab state, so a session that wants you is visible from the tab
+   even while you are looking at a different one. */
+.tab .dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  background: transparent;
+}
+
+.tab.state-busy .dot {
+  background: var(--busy);
+}
+.tab.state-done .dot {
+  background: var(--done);
+}
+.tab.state-needsInput .dot {
+  background: var(--needs);
+}
+
+#tab-add {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#tab-add:hover {
+  color: var(--fg);
+  border-color: var(--dim);
+}
+
+#terminals {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+/* A pane measures as zero while hidden, and fitting a zero-sized
+   terminal reflows the agent's TUI down to nothing, so only the active
+   pane is ever laid out. */
+.pane {
+  position: absolute;
+  inset: 0;
   padding: 4px 0 4px 6px;
   box-sizing: border-box;
 }
 
+.pane[hidden] {
+  display: none;
+}
+
 /* Fill the padded container so FitAddon measures the right area. */
-#terminal .xterm {
+.pane .xterm {
   height: 100%;
 }
 
@@ -461,7 +565,7 @@ body.state-busy .pill .dot {
 }
 
 /* Only one view at a time. */
-body.mode-bar #terminal,
+body.mode-bar #workspace,
 body.mode-bar #titlebar,
 body.mode-bar #find,
 body.mode-bar #settings,
