@@ -16,6 +16,12 @@
           <span class="label">idle</span>
           <span class="elapsed"></span>
         </span>
+        <button class="icon settings-open" title="Settings (Cmd+,)">
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <circle cx="6" cy="6" r="2" />
+            <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M9.5 2.5l-1 1M3.5 8.5l-1 1" />
+          </svg>
+        </button>
         <button class="icon collapse" title="Collapse to the bar">
           <svg viewBox="0 0 12 12" aria-hidden="true">
             <path d="M2 2.5h8M6 9.5 3.5 6.5h5z" />
@@ -57,6 +63,118 @@
           <path d="m3 3 6 6M9 3l-6 6" />
         </svg>
       </button>
+    </div>
+
+    <!-- Said once, on the launch that put the entries in. Overlays the
+         terminal rather than taking a row, so it cannot reflow a TUI. -->
+    <div id="first-run" hidden>
+      <p>
+        OverTerm added four entries to <code>~/.claude/settings.json</code> so it
+        can read exactly when Claude Code starts, finishes or asks you something.
+        Turn it off any time in settings.
+      </p>
+      <button id="first-run-ok">Got it</button>
+    </div>
+
+    <!-- Settings, as a sheet over the terminal rather than a third window
+         mode. A mode would mean teaching the choreography rules about a
+         view that has nothing to do with the agent. -->
+    <div id="settings" hidden>
+      <div class="sheet">
+        <header class="sheet-head">
+          <span>Settings</span>
+          <button class="icon settings-close" title="Close (Esc)">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="m3 3 6 6M9 3l-6 6" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="sheet-body">
+          <h3>While an agent works</h3>
+
+          <label class="row">
+            <input type="checkbox" id="collapse-on-submit" />
+            <span>Collapse to the bar when you hand it a job</span>
+          </label>
+
+          <label class="row indent">
+            <span>after</span>
+            <input type="number" id="collapse-delay" min="0" max="10000" step="100" />
+            <span class="unit">ms</span>
+          </label>
+
+          <label class="row">
+            <input type="checkbox" id="expand-when-wanted" />
+            <span>Come back when it finishes or needs you</span>
+          </label>
+
+          <label class="row indent">
+            <span>show the terminal if nothing happens for</span>
+            <input type="number" id="reveal-stalled" min="0" max="60000" step="500" />
+            <span class="unit">ms</span>
+          </label>
+
+          <h3>Getting your attention</h3>
+
+          <label class="row">
+            <input type="checkbox" id="cue-glow" />
+            <span>Glow around the window</span>
+          </label>
+
+          <label class="row">
+            <input type="checkbox" id="cue-sound" />
+            <span>Play a sound</span>
+          </label>
+
+          <h3>Summoning the window</h3>
+
+          <label class="row">
+            <span>Shortcut</span>
+            <input type="text" id="hotkey" readonly spellcheck="false" placeholder="press a chord" />
+          </label>
+
+          <p class="note" id="hotkey-note"></p>
+
+          <h3>Claude Code</h3>
+
+          <label class="row">
+            <input type="checkbox" id="claude-hooks" />
+            <span>Read Claude Code's own events</span>
+          </label>
+
+          <p class="note" id="hooks-note"></p>
+
+          <h3>Terminal</h3>
+
+          <label class="row">
+            <span>Font</span>
+            <input type="text" id="font-family" spellcheck="false" autocomplete="off" />
+          </label>
+
+          <label class="row">
+            <span>Size</span>
+            <input type="number" id="font-size" min="6" max="48" step="1" />
+            <span class="unit">px</span>
+          </label>
+
+          <label class="row">
+            <span>Scrollback</span>
+            <input type="number" id="scrollback" min="0" max="200000" step="1000" />
+            <span class="unit">lines</span>
+          </label>
+
+          <h3>Appearance</h3>
+
+          <label class="row">
+            <span>Opacity</span>
+            <input type="range" id="opacity" min="10" max="100" step="1" />
+            <span class="unit" id="opacity-value"></span>
+          </label>
+
+          <p class="note" id="settings-note"></p>
+        </div>
+      </div>
     </div>
 
     <!-- Compact strip shown while the agent works. -->

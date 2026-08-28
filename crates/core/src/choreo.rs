@@ -37,18 +37,15 @@ pub struct Cues {
     pub glow: bool,
     /// Short sound.
     pub sound: bool,
-    /// Native notification, for when the window is hidden entirely.
-    pub notify: bool,
 }
 
 impl Default for Cues {
     fn default() -> Self {
         // Quiet by default: the window is on screen anyway, so a glow is
-        // enough. Sound and notifications are opt-in.
+        // enough. Sound is opt-in.
         Self {
             glow: true,
             sound: false,
-            notify: false,
         }
     }
 }
@@ -69,7 +66,7 @@ pub enum WindowAction {
     ClearAttention,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChoreoConfig {
     /// Collapse to the bar once the user hands the session something to do.
     pub collapse_on_submit: bool,
@@ -99,7 +96,15 @@ impl Default for ChoreoConfig {
 }
 
 /// Decide what the window should do about one event.
-pub fn plan(event: &ChoreoEvent, cfg: &ChoreoConfig) -> Vec<WindowAction> {
+///
+/// `user_asked` is whether the user has handed this session something to
+/// do since the last time it concluded. Things happen in a terminal that
+/// nobody asked for, and a session reaching Done on its own is not worth
+/// interrupting anyone over: the first thing Claude Code does on a new
+/// folder is ask whether it is trusted, and the Done that lands once that
+/// is answered used to fire the full attention treatment for work the
+/// user never requested.
+pub fn plan(event: &ChoreoEvent, cfg: &ChoreoConfig, user_asked: bool) -> Vec<WindowAction> {
     match event {
         // Handing the session a job is the one thing that means "I am
         // done with the terminal for now". Busy on its own does not:
@@ -125,7 +130,12 @@ pub fn plan(event: &ChoreoEvent, cfg: &ChoreoConfig) -> Vec<WindowAction> {
                 if cfg.expand_when_wanted {
                     actions.push(WindowAction::Expand);
                 }
-                actions.push(WindowAction::Attention(cfg.cues));
+                // The terminal still comes back either way: an unasked-for
+                // question is exactly the thing somebody has to be able to
+                // see and answer. It just does it quietly.
+                if user_asked {
+                    actions.push(WindowAction::Attention(cfg.cues));
+                }
                 actions
             }
             // Settling down after output nobody asked for. Nothing
@@ -150,7 +160,7 @@ mod tests {
 
     #[test]
     fn submitting_collapses_and_clears_the_last_cue() {
-        let actions = plan(&ChoreoEvent::Submitted, &ChoreoConfig::default());
+        let actions = plan(&ChoreoEvent::Submitted, &ChoreoConfig::default(), true);
         assert_eq!(
             actions,
             vec![
@@ -169,6 +179,7 @@ mod tests {
         let actions = plan(
             &changed(AgentState::Idle, AgentState::Busy),
             &ChoreoConfig::default(),
+            true,
         );
         assert_eq!(actions, vec![WindowAction::ClearAttention]);
     }
@@ -176,7 +187,7 @@ mod tests {
     #[test]
     fn finishing_expands_and_fires_cues() {
         let cfg = ChoreoConfig::default();
-        let actions = plan(&changed(AgentState::Busy, AgentState::Done), &cfg);
+        let actions = plan(&changed(AgentState::Busy, AgentState::Done), &cfg, true);
         assert_eq!(
             actions,
             vec![WindowAction::Expand, WindowAction::Attention(cfg.cues)]
@@ -187,8 +198,12 @@ mod tests {
     fn needing_input_behaves_like_finishing() {
         let cfg = ChoreoConfig::default();
         assert_eq!(
-            plan(&changed(AgentState::Busy, AgentState::NeedsInput), &cfg),
-            plan(&changed(AgentState::Busy, AgentState::Done), &cfg),
+            plan(
+                &changed(AgentState::Busy, AgentState::NeedsInput),
+                &cfg,
+                true
+            ),
+            plan(&changed(AgentState::Busy, AgentState::Done), &cfg, true),
         );
     }
 
@@ -197,6 +212,7 @@ mod tests {
         let actions = plan(
             &changed(AgentState::Busy, AgentState::Idle),
             &ChoreoConfig::default(),
+            true,
         );
         assert_eq!(actions, vec![WindowAction::ClearAttention]);
         assert!(!actions.contains(&WindowAction::Expand));
@@ -209,7 +225,7 @@ mod tests {
             ..ChoreoConfig::default()
         };
         assert_eq!(
-            plan(&ChoreoEvent::Submitted, &cfg),
+            plan(&ChoreoEvent::Submitted, &cfg, true),
             vec![WindowAction::ClearAttention]
         );
     }
@@ -221,8 +237,42 @@ mod tests {
             ..ChoreoConfig::default()
         };
         assert_eq!(
-            plan(&changed(AgentState::Busy, AgentState::Done), &cfg),
+            plan(&changed(AgentState::Busy, AgentState::Done), &cfg, true),
             vec![WindowAction::Attention(cfg.cues)]
+        );
+    }
+
+    #[test]
+    fn work_nobody_asked_for_finishes_quietly() {
+        // What this is really about: Claude Code asks whether a new
+        // folder is trusted before the user has said anything, and the
+        // Done that lands once it is answered used to glow, chime and
+        // notify for work nobody requested.
+        let cfg = ChoreoConfig::default();
+        let actions = plan(&changed(AgentState::Busy, AgentState::Done), &cfg, false);
+        assert_eq!(
+            actions,
+            vec![WindowAction::Expand],
+            "the terminal still comes back, it just does not shout"
+        );
+    }
+
+    #[test]
+    fn an_unasked_question_still_brings_the_terminal_back() {
+        // The case that must not regress: something is on screen waiting
+        // for an answer, and the user cannot give one if the window
+        // stays collapsed.
+        let cfg = ChoreoConfig::default();
+        let actions = plan(
+            &changed(AgentState::Busy, AgentState::NeedsInput),
+            &cfg,
+            false,
+        );
+        assert!(actions.contains(&WindowAction::Expand));
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, WindowAction::Attention(_)))
         );
     }
 }

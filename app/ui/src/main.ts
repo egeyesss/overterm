@@ -18,7 +18,29 @@ type PtyEvent =
   | { event: 'agentStateChanged'; data: { state: AgentState; cause: string } }
   | { event: 'exited'; data: { code: number | null } };
 
-type Cues = { glow: boolean; sound: boolean; notify: boolean };
+type Cues = { glow: boolean; sound: boolean };
+
+/// Mirrors the Rust struct, so the keys are snake_case the whole way
+/// through: what the interface shows and what somebody reads in
+/// config.toml are then the same names.
+type Settings = {
+  claude_hooks_installed: boolean;
+  claude_hooks_notice_seen: boolean;
+  opacity: number;
+  hotkey: string;
+  window: {
+    collapse_on_submit: boolean;
+    collapse_delay_ms: number;
+    expand_when_wanted: boolean;
+    reveal_when_stalled_ms: number;
+  };
+  cues: Cues;
+  terminal: {
+    font_family: string;
+    font_size: number;
+    scrollback: number;
+  };
+};
 
 /// Font sizes the zoom shortcuts step between, smallest to largest.
 const FONT_SIZES = [9, 10, 11, 12, 13, 14, 16, 18, 20, 24];
@@ -153,6 +175,7 @@ function applyMode(next: WindowMode) {
     // Nothing to search once the terminal is off screen, and leaving it
     // open means it comes back with a stale query on the next expand.
     if (!findBox.hidden) closeFind();
+    if (!settingsSheet.hidden) closeSettings();
     showDraft();
   }
   // Keep typing flowing across an automatic switch, but only when the
@@ -186,7 +209,9 @@ listen<{ mode: WindowMode }>('overterm://mode', (event) => applyMode(event.paylo
 // Escape reaches the find bar even when the terminal has focus, which is
 // where you are when you opened it and found what you wanted.
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !findBox.hidden) closeFind();
+  if (event.key !== 'Escape') return;
+  if (!settingsSheet.hidden) closeSettings();
+  else if (!findBox.hidden) closeFind();
 });
 
 // --- terminal shortcuts ----------------------------------------------
@@ -197,16 +222,30 @@ window.addEventListener('keydown', (event) => {
 /// columns. Refitting is what tells the program on the other end to
 /// redraw itself narrower instead of wrapping at the old width.
 function zoom(steps: number) {
-  const current = FONT_SIZES.indexOf(term.options.fontSize ?? DEFAULT_FONT_SIZE);
-  const from = current === -1 ? FONT_SIZES.indexOf(DEFAULT_FONT_SIZE) : current;
+  const size = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+  // Nearest step rather than an exact match, so a size typed into the
+  // settings sheet still zooms from where it is instead of jumping.
+  let from = 0;
+  for (let i = 1; i < FONT_SIZES.length; i++) {
+    if (Math.abs(FONT_SIZES[i] - size) < Math.abs(FONT_SIZES[from] - size)) from = i;
+  }
   const next = Math.min(Math.max(from + steps, 0), FONT_SIZES.length - 1);
-  term.options.fontSize = FONT_SIZES[next];
-  fit.fit();
+  setFontSize(FONT_SIZES[next]);
 }
 
 function resetZoom() {
-  term.options.fontSize = DEFAULT_FONT_SIZE;
+  setFontSize(DEFAULT_FONT_SIZE);
+}
+
+/// Resize the terminal and remember it, so a zoom survives a relaunch
+/// rather than being undone by the stored size on the next start.
+function setFontSize(size: number) {
+  term.options.fontSize = size;
   fit.fit();
+  if (settings && settings.terminal.font_size !== size) {
+    settings = { ...settings, terminal: { ...settings.terminal, font_size: size } };
+    persist(settings);
+  }
 }
 
 /// Copy the selection, and report whether there was one to copy.
@@ -308,6 +347,258 @@ findInput.addEventListener('keydown', (event) => {
 findBox.querySelector('.find-next')!.addEventListener('click', () => runFind('next'));
 findBox.querySelector('.find-prev')!.addEventListener('click', () => runFind('previous'));
 findBox.querySelector('.find-close')!.addEventListener('click', closeFind);
+
+// --- settings --------------------------------------------------------
+
+const settingsSheet = document.getElementById('settings')!;
+const settingsNote = document.getElementById('settings-note')!;
+
+/// Last known stored settings. The sheet edits a copy of this and sends
+/// the whole thing back, so a field the interface does not show yet is
+/// carried through untouched rather than dropped.
+let settings: Settings | null = null;
+
+const field = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const collapseOnSubmit = field<HTMLInputElement>('collapse-on-submit');
+const collapseDelay = field<HTMLInputElement>('collapse-delay');
+const expandWhenWanted = field<HTMLInputElement>('expand-when-wanted');
+const revealStalled = field<HTMLInputElement>('reveal-stalled');
+const cueGlow = field<HTMLInputElement>('cue-glow');
+const cueSound = field<HTMLInputElement>('cue-sound');
+const hotkey = field<HTMLInputElement>('hotkey');
+const hotkeyNote = field<HTMLElement>('hotkey-note');
+const claudeHooks = field<HTMLInputElement>('claude-hooks');
+const hooksNote = field<HTMLElement>('hooks-note');
+const fontFamily = field<HTMLInputElement>('font-family');
+const fontSize = field<HTMLInputElement>('font-size');
+const scrollback = field<HTMLInputElement>('scrollback');
+const opacity = field<HTMLInputElement>('opacity');
+const opacityValue = field<HTMLElement>('opacity-value');
+
+function showSettings(current: Settings) {
+  settings = current;
+  collapseOnSubmit.checked = current.window.collapse_on_submit;
+  collapseDelay.value = String(current.window.collapse_delay_ms);
+  expandWhenWanted.checked = current.window.expand_when_wanted;
+  revealStalled.value = String(current.window.reveal_when_stalled_ms);
+  cueGlow.checked = current.cues.glow;
+  cueSound.checked = current.cues.sound;
+  hotkey.value = current.hotkey;
+  fontFamily.value = current.terminal.font_family;
+  fontSize.value = String(current.terminal.font_size);
+  scrollback.value = String(current.terminal.scrollback);
+  opacity.value = String(current.opacity);
+  opacityValue.textContent = `${current.opacity}%`;
+  applyTerminalSettings(current);
+  // The delay only means anything if the window collapses at all.
+  collapseDelay.closest('.row')!.classList.toggle('inactive', !current.window.collapse_on_submit);
+}
+
+/// Put the stored terminal preferences on the terminal itself.
+///
+/// Changing the font changes how wide a cell is, so the terminal has to
+/// be measured again and the new size passed to the program running in
+/// it. Without that it keeps drawing to the old width and wraps.
+function applyTerminalSettings(current: Settings) {
+  term.options.fontFamily = current.terminal.font_family;
+  term.options.fontSize = current.terminal.font_size;
+  term.options.scrollback = current.terminal.scrollback;
+  if (mode === 'panel') fit.fit();
+}
+
+/// Send the whole settings object and adopt whatever comes back.
+///
+/// The reply is the stored version rather than what was sent, because the
+/// backend clamps some values. Taking its word keeps the interface honest
+/// about what is actually in effect.
+function saveSettings() {
+  if (!settings) return;
+  const next: Settings = {
+    ...settings,
+    opacity: Number(opacity.value),
+    window: {
+      collapse_on_submit: collapseOnSubmit.checked,
+      collapse_delay_ms: Number(collapseDelay.value) || 0,
+      expand_when_wanted: expandWhenWanted.checked,
+      reveal_when_stalled_ms: Number(revealStalled.value) || 0,
+    },
+    cues: { glow: cueGlow.checked, sound: cueSound.checked },
+    terminal: {
+      font_family: fontFamily.value.trim() || settings.terminal.font_family,
+      font_size: Number(fontSize.value) || settings.terminal.font_size,
+      scrollback: Number(scrollback.value) || 0,
+    },
+  };
+  persist(next);
+}
+
+function persist(next: Settings) {
+  invoke<Settings>('save_settings', { settings: next })
+    .then((stored) => {
+      settingsNote.textContent = '';
+      settingsNote.classList.remove('failed');
+      showSettings(stored);
+    })
+    .catch((err) => {
+      settingsNote.textContent = `Could not save: ${err}`;
+      settingsNote.classList.add('failed');
+    });
+}
+
+// The opacity slider fires continuously while dragging, so show the
+// number every time and only write the file once the drag settles.
+opacity.addEventListener('input', () => {
+  opacityValue.textContent = `${opacity.value}%`;
+});
+opacity.addEventListener('change', saveSettings);
+
+for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound]) {
+  input.addEventListener('change', saveSettings);
+}
+for (const input of [collapseDelay, revealStalled, fontSize, scrollback, fontFamily]) {
+  input.addEventListener('change', saveSettings);
+}
+
+/// Modifier names in the order the shortcut parser writes them.
+const MODIFIERS = [
+  ['metaKey', 'CmdOrCtrl'],
+  ['ctrlKey', 'Control'],
+  ['altKey', 'Alt'],
+  ['shiftKey', 'Shift'],
+] as const;
+
+/// Build a chord from a keypress, or null while only modifiers are held.
+///
+/// Held modifiers arrive as their own keydown events, so the box shows
+/// them building up and only commits once a real key lands.
+function chordFrom(event: KeyboardEvent): { chord: string; complete: boolean } {
+  const parts: string[] = [];
+  for (const [flag, name] of MODIFIERS) {
+    if (event[flag]) parts.push(name);
+  }
+  const key = event.key;
+  const isModifier = ['Meta', 'Control', 'Alt', 'Shift'].includes(key);
+  if (isModifier) return { chord: parts.join('+'), complete: false };
+  const named = key.length === 1 ? key.toUpperCase() : key;
+  return { chord: [...parts, named].join('+'), complete: parts.length > 0 };
+}
+
+hotkey.addEventListener('keydown', (event) => {
+  event.preventDefault();
+  const { chord, complete } = chordFrom(event);
+  hotkey.value = chord;
+  if (!complete) {
+    hotkeyNote.classList.remove('failed');
+    hotkeyNote.textContent = chord ? 'Now press a key.' : 'Hold a modifier first.';
+    return;
+  }
+  invoke<string>('set_hotkey', { hotkey: chord })
+    .then((stored) => {
+      hotkey.value = stored;
+      hotkeyNote.classList.remove('failed');
+      hotkeyNote.textContent = 'Saved.';
+      if (settings) settings = { ...settings, hotkey: stored };
+    })
+    .catch((err) => {
+      hotkeyNote.textContent = String(err);
+      hotkeyNote.classList.add('failed');
+      // Put the working chord back, so the box never shows one that is
+      // not actually registered.
+      if (settings) hotkey.value = settings.hotkey;
+    });
+});
+
+hotkey.addEventListener('focus', () => {
+  hotkeyNote.classList.remove('failed');
+  hotkeyNote.textContent = 'Press the chord you want.';
+});
+
+hotkey.addEventListener('blur', () => {
+  hotkeyNote.textContent = '';
+  if (settings) hotkey.value = settings.hotkey;
+});
+
+/// Ask whether our entries are in Claude Code's settings file, and say
+/// what turning this off and on actually does to it.
+///
+/// Read from that file rather than from our own record of it, because the
+/// user can edit or delete the entries by hand and our record would then
+/// be describing a file that no longer says that.
+function refreshHooks() {
+  invoke<boolean>('hooks_installed')
+    .then((installed) => {
+      claudeHooks.checked = installed;
+      hooksNote.classList.remove('failed');
+      hooksNote.textContent = installed
+        ? 'Four entries in ~/.claude/settings.json let OverTerm read exactly when a turn starts, finishes or asks you something. Turning this off removes them and leaves the rest of that file alone.'
+        : 'Not set up. Detection falls back to reading the terminal, which is what every other tool gets. Turning this on adds four entries to ~/.claude/settings.json.';
+    })
+    .catch((err) => {
+      // No Claude Code on this machine is the usual reason, and it is
+      // not a failure worth alarming anybody about.
+      claudeHooks.checked = false;
+      hooksNote.classList.remove('failed');
+      hooksNote.textContent = `Claude Code settings not readable here (${err}). Detection still works by reading the terminal.`;
+    });
+}
+
+claudeHooks.addEventListener('change', () => {
+  const command = claudeHooks.checked ? 'install_hooks' : 'uninstall_hooks';
+  invoke<boolean>(command)
+    .then(refreshHooks)
+    .catch((err) => {
+      hooksNote.textContent = `Could not change the Claude Code entries: ${err}`;
+      hooksNote.classList.add('failed');
+      refreshHooks();
+    });
+});
+
+const firstRun = field<HTMLElement>('first-run');
+
+/// Say once that the app wrote into a config file the user owns.
+///
+/// It reports itself on stderr, which nobody sees outside a dev build, so
+/// on an installed copy this was completely silent.
+function maybeShowFirstRun(current: Settings) {
+  if (!current.claude_hooks_installed || current.claude_hooks_notice_seen) return;
+  firstRun.hidden = false;
+}
+
+field<HTMLButtonElement>('first-run-ok').addEventListener('click', () => {
+  firstRun.hidden = true;
+  invoke('dismiss_hooks_notice').catch(() => {
+    // Saying it twice is better than the write failing loudly over a
+    // terminal somebody is trying to use.
+  });
+});
+
+function openSettings() {
+  if (mode !== 'panel') return; // the sheet has no room in the bar
+  // Read on every open rather than trusting the copy in memory, so a
+  // file edited by hand between openings is not silently overwritten.
+  invoke<Settings>('settings')
+    .then(showSettings)
+    .catch((err) => {
+      settingsNote.textContent = `Could not read the settings: ${err}`;
+      settingsNote.classList.add('failed');
+    });
+  refreshHooks();
+  settingsSheet.hidden = false;
+}
+
+function closeSettings() {
+  settingsSheet.hidden = true;
+  term.focus();
+}
+
+for (const button of document.querySelectorAll('.icon.settings-open')) {
+  button.addEventListener('click', openSettings);
+}
+settingsSheet.querySelector('.settings-close')!.addEventListener('click', closeSettings);
+// Clicking the dimmed area outside the sheet closes it.
+settingsSheet.addEventListener('click', (event) => {
+  if (event.target === settingsSheet) closeSettings();
+});
 
 // --- attention cues --------------------------------------------------
 
@@ -439,6 +730,16 @@ barInput.addEventListener('paste', (event) => {
 });
 
 async function start() {
+  // Before the session spawns: the terminal reports its size to the PTY
+  // on spawn, and that size depends on the font.
+  try {
+    const current = await invoke<Settings>('settings');
+    showSettings(current);
+    maybeShowFirstRun(current);
+  } catch {
+    // The defaults the terminal was built with are already correct.
+  }
+
   const onEvent = new Channel<PtyEvent>();
   onEvent.onmessage = (msg) => {
     if (msg.event === 'output') {
@@ -481,6 +782,9 @@ async function start() {
     switch (event.key) {
       case 'f':
         openFind();
+        return handled(event);
+      case ',':
+        openSettings();
         return handled(event);
       case 'c':
         // Nothing selected means nothing to copy, so let the key through

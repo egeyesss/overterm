@@ -11,7 +11,9 @@ use std::time::Duration;
 use overterm_core::choreo::{ChoreoConfig, ChoreoEvent, Cues, WindowAction, WindowMode, plan};
 use overterm_core::{AgentState, StateChange};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, Runtime, State};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime, State, WebviewWindow,
+};
 
 use crate::platform::PlatformWindow;
 
@@ -52,7 +54,10 @@ struct AttentionPayload {
 }
 
 struct Inner {
-    cfg: ChoreoConfig,
+    /// Behind a lock because the settings can change while the app runs.
+    /// Always copied out rather than held: the window calls below can
+    /// block, and nothing else should wait on them to read a preference.
+    cfg: Mutex<ChoreoConfig>,
     state: Mutex<Windowing>,
     /// Bumped on every state change. A delayed collapse only fires if the
     /// generation it was scheduled with is still current, so work that
@@ -67,6 +72,12 @@ struct Inner {
 struct Windowing {
     mode: WindowMode,
     state: AgentState,
+    /// Whether the user has handed this session something to do since it
+    /// last reached a conclusion. Attention cues are for answering a
+    /// question somebody asked, and a terminal does things nobody asked
+    /// for: the folder trust prompt Claude Code shows before the user has
+    /// said anything is the case this exists for.
+    user_asked: bool,
     /// Height to restore when expanding, remembered from the last time
     /// the window was expanded so the user's own resizing survives.
     panel_height: f64,
@@ -78,16 +89,30 @@ pub struct Choreographer(Arc<Inner>);
 impl Choreographer {
     pub fn new(cfg: ChoreoConfig) -> Self {
         Self(Arc::new(Inner {
-            cfg,
+            cfg: Mutex::new(cfg),
             state: Mutex::new(Windowing {
                 mode: WindowMode::default(),
                 state: AgentState::Idle,
+                user_asked: false,
                 panel_height: DEFAULT_PANEL_HEIGHT,
             }),
             generation: AtomicU64::new(0),
             work_check: Mutex::new(None),
             work_generation: AtomicU64::new(0),
         }))
+    }
+
+    fn cfg(&self) -> ChoreoConfig {
+        *self.0.cfg.lock().unwrap()
+    }
+
+    /// Take new preferences without a restart.
+    ///
+    /// Only affects what happens next. A collapse already scheduled runs
+    /// on the delay it was scheduled with, which is a moment old at
+    /// worst and not worth the bookkeeping to chase.
+    pub fn set_config(&self, cfg: ChoreoConfig) {
+        *self.0.cfg.lock().unwrap() = cfg;
     }
 
     /// Register how to tell whether the session is working, and start
@@ -126,7 +151,7 @@ impl Choreographer {
                     continue;
                 }
                 still_for_ms += STALL_POLL_MS;
-                if still_for_ms < this.0.cfg.reveal_when_stalled_ms {
+                if still_for_ms < this.cfg().reveal_when_stalled_ms {
                     continue;
                 }
                 still_for_ms = 0;
@@ -164,11 +189,24 @@ impl Choreographer {
     }
 
     fn dispatch<R: Runtime>(&self, app: &AppHandle<R>, event: ChoreoEvent) {
-        if let ChoreoEvent::StateChanged(change) = &event {
-            self.0.state.lock().unwrap().state = change.to;
-        }
+        let user_asked = {
+            let mut windowing = self.0.state.lock().unwrap();
+            match &event {
+                ChoreoEvent::Submitted => windowing.user_asked = true,
+                ChoreoEvent::StateChanged(change) => windowing.state = change.to,
+            }
+            let asked = windowing.user_asked;
+            // Spent on the conclusion it belongs to, so the next thing
+            // the session does on its own is quiet again.
+            if let ChoreoEvent::StateChanged(change) = &event
+                && matches!(change.to, AgentState::Done | AgentState::NeedsInput)
+            {
+                windowing.user_asked = false;
+            }
+            asked
+        };
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        for action in plan(&event, &self.0.cfg) {
+        for action in plan(&event, &self.cfg(), user_asked) {
             self.apply(app, action, generation);
         }
     }
@@ -236,7 +274,7 @@ impl Choreographer {
             state.mode = WindowMode::Bar;
         }
         if let Some(width) = logical_width(&window) {
-            let _ = window.set_size(LogicalSize::new(width, BAR_HEIGHT));
+            resize_keeping_top(&window, width, BAR_HEIGHT);
         }
         let _ = app.emit(
             EVENT_MODE,
@@ -256,7 +294,7 @@ impl Choreographer {
             state.panel_height
         };
         if let Some(width) = logical_width(&window) {
-            let _ = window.set_size(LogicalSize::new(width, height));
+            resize_keeping_top(&window, width, height);
         }
         if raise {
             // An agent finishing its work must never pull keyboard focus
@@ -278,6 +316,67 @@ fn logical_size<R: Runtime>(window: &tauri::WebviewWindow<R>) -> Option<(f64, f6
     let scale = window.scale_factor().ok()?;
     let size = window.inner_size().ok()?.to_logical::<f64>(scale);
     Some((size.width, size.height))
+}
+
+/// Resize without moving the top edge, and keep the result on screen.
+///
+/// Tauri positions a window by its top-left corner, but a macOS window
+/// frame is anchored at its bottom-left, so growing the height alone
+/// pushes the top of the window upward. Expanding a bar that sat near the
+/// top of the display put the title bar above the top of the screen,
+/// taking the only part you can drag with it, and there was then no way
+/// to get the window back.
+fn resize_keeping_top<R: Runtime>(window: &WebviewWindow<R>, width: f64, height: f64) {
+    let before = window.outer_position().ok();
+    if let Err(e) = window.set_size(LogicalSize::new(width, height)) {
+        eprintln!("[choreograph] resize failed: {e}");
+        return;
+    }
+    let Some(top_left) = before else {
+        return;
+    };
+    let _ = window.set_position(top_left);
+    keep_on_screen(window, height);
+
+    // Set OVERTERM_WINDOW_DEBUG to watch where the window actually ends
+    // up. "I asked for this position" and "the window is at this
+    // position" are different claims, and only the second one is worth
+    // anything: this whole function exists because a resize was moving
+    // the window somewhere nobody asked it to go.
+    if std::env::var_os("OVERTERM_WINDOW_DEBUG").is_some()
+        && let Ok(after) = window.outer_position()
+    {
+        eprintln!(
+            "[choreograph] resize to {width}x{height}: top-left {},{} -> {},{}",
+            top_left.x, top_left.y, after.x, after.y
+        );
+    }
+}
+
+/// Pull the window back onto the display if it now hangs off the bottom.
+///
+/// Only ever moves it up, and never past the top of the screen, because
+/// the top edge is where the part you can grab lives. A window taller
+/// than the display keeps its top on screen rather than its bottom.
+fn keep_on_screen<R: Runtime>(window: &WebviewWindow<R>, height: f64) {
+    let (Ok(Some(monitor)), Ok(position)) = (window.current_monitor(), window.outer_position())
+    else {
+        return;
+    };
+    let screen_top = monitor.position().y;
+    let screen_bottom = screen_top + monitor.size().height as i32;
+    let tall = (height * monitor.scale_factor()).round() as i32;
+
+    let mut y = position.y;
+    if y + tall > screen_bottom {
+        y = screen_bottom - tall;
+    }
+    if y < screen_top {
+        y = screen_top;
+    }
+    if y != position.y {
+        let _ = window.set_position(PhysicalPosition::new(position.x, y));
+    }
 }
 
 fn logical_width<R: Runtime>(window: &tauri::WebviewWindow<R>) -> Option<f64> {
