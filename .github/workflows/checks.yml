@@ -34,3 +34,25 @@ jobs:
       # needs it, and leaving it out keeps the run to one toolchain.
       - name: Tests
         run: cargo test --workspace
+
+  # crates/core is meant to have no UI and no platform dependencies, so a
+  # Windows or Linux port can pick it up untouched. Nothing enforced that
+  # except discipline. Building it on Linux fails the moment something
+  # platform specific gets pulled in.
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Lints
+        run: cargo clippy -p overterm-core --all-targets -- -D warnings
+
+      # The session tests spawn /bin/sh in a real PTY and the detection
+      # tests replay recorded transcripts, so both run here unchanged.
+      - name: Tests
+        run: cargo test -p overterm-core
