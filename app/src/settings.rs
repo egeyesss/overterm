@@ -22,7 +22,9 @@ use crate::platform::PlatformWindow;
 pub const MIN_OPACITY: u8 = 10;
 pub const MAX_OPACITY: u8 = 100;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// Not Copy: the terminal font is a String. Everything is cloned or moved
+// explicitly instead, which is no hardship for a struct read once a save.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 // Missing fields take their default, so a file written by an older build
 // still loads, and one written by a newer build loses only what this
 // build does not know about.
@@ -45,6 +47,30 @@ pub struct Settings {
     // table cannot be written back out.
     pub window: WindowSettings,
     pub cues: CueSettings,
+    pub terminal: TerminalSettings,
+}
+
+/// How the terminal itself is drawn. Read by the frontend, which owns the
+/// terminal; nothing on this side acts on them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalSettings {
+    /// A CSS font stack, so a missing font falls back rather than
+    /// rendering the terminal in something proportional.
+    pub font_family: String,
+    pub font_size: u16,
+    /// Lines kept above the top of the window.
+    pub scrollback: u32,
+}
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            font_family: "Menlo, Monaco, \"SF Mono\", monospace".into(),
+            font_size: 13,
+            scrollback: 10_000,
+        }
+    }
 }
 
 /// What the window does when the agent's state changes.
@@ -107,6 +133,7 @@ impl Default for Settings {
             opacity: MAX_OPACITY,
             window: WindowSettings::default(),
             cues: CueSettings::default(),
+            terminal: TerminalSettings::default(),
         }
     }
 }
@@ -203,9 +230,10 @@ pub fn save_settings<R: Runtime>(
     settings: Settings,
 ) -> Result<Settings, String> {
     let stored = load();
+    let opacity = settings.opacity.clamp(MIN_OPACITY, MAX_OPACITY);
     let next = Settings {
         claude_hooks_installed: stored.claude_hooks_installed,
-        opacity: settings.opacity.clamp(MIN_OPACITY, MAX_OPACITY),
+        opacity,
         ..settings
     };
 
@@ -265,6 +293,10 @@ mod tests {
                 sound: true,
                 ..CueSettings::default()
             },
+            terminal: TerminalSettings {
+                font_size: 16,
+                ..TerminalSettings::default()
+            },
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
@@ -301,6 +333,18 @@ mod tests {
                 settings.alpha()
             );
         }
+    }
+
+    #[test]
+    fn the_terminal_defaults_name_a_font_stack_not_one_font() {
+        // A single font name that is missing leaves the terminal in a
+        // proportional face, which makes every TUI unreadable.
+        let terminal = TerminalSettings::default();
+        assert!(
+            terminal.font_family.contains("monospace"),
+            "the stack has to end somewhere safe: {}",
+            terminal.font_family
+        );
     }
 
     #[test]

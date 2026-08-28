@@ -33,6 +33,11 @@ type Settings = {
     reveal_when_stalled_ms: number;
   };
   cues: Cues;
+  terminal: {
+    font_family: string;
+    font_size: number;
+    scrollback: number;
+  };
 };
 
 /// Font sizes the zoom shortcuts step between, smallest to largest.
@@ -215,16 +220,30 @@ window.addEventListener('keydown', (event) => {
 /// columns. Refitting is what tells the program on the other end to
 /// redraw itself narrower instead of wrapping at the old width.
 function zoom(steps: number) {
-  const current = FONT_SIZES.indexOf(term.options.fontSize ?? DEFAULT_FONT_SIZE);
-  const from = current === -1 ? FONT_SIZES.indexOf(DEFAULT_FONT_SIZE) : current;
+  const size = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+  // Nearest step rather than an exact match, so a size typed into the
+  // settings sheet still zooms from where it is instead of jumping.
+  let from = 0;
+  for (let i = 1; i < FONT_SIZES.length; i++) {
+    if (Math.abs(FONT_SIZES[i] - size) < Math.abs(FONT_SIZES[from] - size)) from = i;
+  }
   const next = Math.min(Math.max(from + steps, 0), FONT_SIZES.length - 1);
-  term.options.fontSize = FONT_SIZES[next];
-  fit.fit();
+  setFontSize(FONT_SIZES[next]);
 }
 
 function resetZoom() {
-  term.options.fontSize = DEFAULT_FONT_SIZE;
+  setFontSize(DEFAULT_FONT_SIZE);
+}
+
+/// Resize the terminal and remember it, so a zoom survives a relaunch
+/// rather than being undone by the stored size on the next start.
+function setFontSize(size: number) {
+  term.options.fontSize = size;
   fit.fit();
+  if (settings && settings.terminal.font_size !== size) {
+    settings = { ...settings, terminal: { ...settings.terminal, font_size: size } };
+    persist(settings);
+  }
 }
 
 /// Copy the selection, and report whether there was one to copy.
@@ -344,6 +363,9 @@ const expandWhenWanted = field<HTMLInputElement>('expand-when-wanted');
 const revealStalled = field<HTMLInputElement>('reveal-stalled');
 const cueGlow = field<HTMLInputElement>('cue-glow');
 const cueSound = field<HTMLInputElement>('cue-sound');
+const fontFamily = field<HTMLInputElement>('font-family');
+const fontSize = field<HTMLInputElement>('font-size');
+const scrollback = field<HTMLInputElement>('scrollback');
 const opacity = field<HTMLInputElement>('opacity');
 const opacityValue = field<HTMLElement>('opacity-value');
 
@@ -355,10 +377,26 @@ function showSettings(current: Settings) {
   revealStalled.value = String(current.window.reveal_when_stalled_ms);
   cueGlow.checked = current.cues.glow;
   cueSound.checked = current.cues.sound;
+  fontFamily.value = current.terminal.font_family;
+  fontSize.value = String(current.terminal.font_size);
+  scrollback.value = String(current.terminal.scrollback);
   opacity.value = String(current.opacity);
   opacityValue.textContent = `${current.opacity}%`;
+  applyTerminalSettings(current);
   // The delay only means anything if the window collapses at all.
   collapseDelay.closest('.row')!.classList.toggle('inactive', !current.window.collapse_on_submit);
+}
+
+/// Put the stored terminal preferences on the terminal itself.
+///
+/// Changing the font changes how wide a cell is, so the terminal has to
+/// be measured again and the new size passed to the program running in
+/// it. Without that it keeps drawing to the old width and wraps.
+function applyTerminalSettings(current: Settings) {
+  term.options.fontFamily = current.terminal.font_family;
+  term.options.fontSize = current.terminal.font_size;
+  term.options.scrollback = current.terminal.scrollback;
+  if (mode === 'panel') fit.fit();
 }
 
 /// Send the whole settings object and adopt whatever comes back.
@@ -378,7 +416,16 @@ function saveSettings() {
       reveal_when_stalled_ms: Number(revealStalled.value) || 0,
     },
     cues: { ...settings.cues, glow: cueGlow.checked, sound: cueSound.checked },
+    terminal: {
+      font_family: fontFamily.value.trim() || settings.terminal.font_family,
+      font_size: Number(fontSize.value) || settings.terminal.font_size,
+      scrollback: Number(scrollback.value) || 0,
+    },
   };
+  persist(next);
+}
+
+function persist(next: Settings) {
   invoke<Settings>('save_settings', { settings: next })
     .then((stored) => {
       settingsNote.textContent = '';
@@ -401,7 +448,7 @@ opacity.addEventListener('change', saveSettings);
 for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound]) {
   input.addEventListener('change', saveSettings);
 }
-for (const input of [collapseDelay, revealStalled]) {
+for (const input of [collapseDelay, revealStalled, fontSize, scrollback, fontFamily]) {
   input.addEventListener('change', saveSettings);
 }
 
@@ -562,6 +609,14 @@ barInput.addEventListener('paste', (event) => {
 });
 
 async function start() {
+  // Before the session spawns: the terminal reports its size to the PTY
+  // on spawn, and that size depends on the font.
+  try {
+    showSettings(await invoke<Settings>('settings'));
+  } catch {
+    // The defaults the terminal was built with are already correct.
+  }
+
   const onEvent = new Channel<PtyEvent>();
   onEvent.onmessage = (msg) => {
     if (msg.event === 'output') {
