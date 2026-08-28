@@ -604,6 +604,18 @@ body.state-busy .pill .dot {
   color: var(--dim);
 }
 
+.version {
+  margin: 22px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.version:empty {
+  display: none;
+}
+
 .note:empty {
   display: none;
 }
