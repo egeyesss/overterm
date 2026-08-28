@@ -69,7 +69,7 @@ pub enum WindowAction {
     ClearAttention,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChoreoConfig {
     /// Collapse to the bar once the user hands the session something to do.
     pub collapse_on_submit: bool,

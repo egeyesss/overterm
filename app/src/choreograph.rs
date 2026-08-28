@@ -52,7 +52,10 @@ struct AttentionPayload {
 }
 
 struct Inner {
-    cfg: ChoreoConfig,
+    /// Behind a lock because the settings can change while the app runs.
+    /// Always copied out rather than held: the window calls below can
+    /// block, and nothing else should wait on them to read a preference.
+    cfg: Mutex<ChoreoConfig>,
     state: Mutex<Windowing>,
     /// Bumped on every state change. A delayed collapse only fires if the
     /// generation it was scheduled with is still current, so work that
@@ -78,7 +81,7 @@ pub struct Choreographer(Arc<Inner>);
 impl Choreographer {
     pub fn new(cfg: ChoreoConfig) -> Self {
         Self(Arc::new(Inner {
-            cfg,
+            cfg: Mutex::new(cfg),
             state: Mutex::new(Windowing {
                 mode: WindowMode::default(),
                 state: AgentState::Idle,
@@ -88,6 +91,19 @@ impl Choreographer {
             work_check: Mutex::new(None),
             work_generation: AtomicU64::new(0),
         }))
+    }
+
+    fn cfg(&self) -> ChoreoConfig {
+        *self.0.cfg.lock().unwrap()
+    }
+
+    /// Take new preferences without a restart.
+    ///
+    /// Only affects what happens next. A collapse already scheduled runs
+    /// on the delay it was scheduled with, which is a moment old at
+    /// worst and not worth the bookkeeping to chase.
+    pub fn set_config(&self, cfg: ChoreoConfig) {
+        *self.0.cfg.lock().unwrap() = cfg;
     }
 
     /// Register how to tell whether the session is working, and start
@@ -126,7 +142,7 @@ impl Choreographer {
                     continue;
                 }
                 still_for_ms += STALL_POLL_MS;
-                if still_for_ms < this.0.cfg.reveal_when_stalled_ms {
+                if still_for_ms < this.cfg().reveal_when_stalled_ms {
                     continue;
                 }
                 still_for_ms = 0;
@@ -168,7 +184,7 @@ impl Choreographer {
             self.0.state.lock().unwrap().state = change.to;
         }
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        for action in plan(&event, &self.0.cfg) {
+        for action in plan(&event, &self.cfg()) {
             self.apply(app, action, generation);
         }
     }

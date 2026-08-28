@@ -7,7 +7,6 @@ mod platform;
 mod pty;
 mod settings;
 
-use overterm_core::ChoreoConfig;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
@@ -41,7 +40,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(pty::Sessions::default())
-        .manage(Choreographer::new(ChoreoConfig::default()))
+        .manage(Choreographer::new(settings::load().choreo()))
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -95,8 +94,8 @@ fn main() {
             hooks::install_hooks,
             hooks::uninstall_hooks,
             hooks::hooks_installed,
-            settings::set_window_opacity,
-            settings::window_opacity,
+            settings::settings,
+            settings::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OverTerm");

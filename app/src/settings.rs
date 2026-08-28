@@ -7,9 +7,11 @@
 
 use std::path::{Path, PathBuf};
 
+use overterm_core::choreo::{ChoreoConfig, Cues};
 use serde::{Deserialize, Serialize};
-use tauri::{Runtime, WebviewWindow};
+use tauri::{Runtime, State, WebviewWindow};
 
+use crate::choreograph::Choreographer;
 use crate::platform::PlatformWindow;
 
 /// Range the window opacity is held to.
@@ -37,6 +39,62 @@ pub struct Settings {
 
     /// How see-through the window is, as a percentage.
     pub opacity: u8,
+
+    // Tables have to come after the plain values above: TOML puts every
+    // key before the first section header, so a scalar declared after a
+    // table cannot be written back out.
+    pub window: WindowSettings,
+    pub cues: CueSettings,
+}
+
+/// What the window does when the agent's state changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowSettings {
+    /// Shrink to the bar once the session is handed a job.
+    pub collapse_on_submit: bool,
+    /// How long it must stay busy first.
+    pub collapse_delay_ms: u64,
+    /// Come back when the agent finishes or asks for something.
+    pub expand_when_wanted: bool,
+    /// How long a collapsed session may sit still, having concluded
+    /// nothing, before the terminal returns anyway.
+    pub reveal_when_stalled_ms: u64,
+}
+
+/// How the app asks for attention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CueSettings {
+    pub glow: bool,
+    pub sound: bool,
+    pub notify: bool,
+}
+
+// Both of these take their defaults from the core crate rather than
+// repeating the numbers, so the rules and the settings file cannot
+// drift apart.
+impl Default for WindowSettings {
+    fn default() -> Self {
+        let cfg = ChoreoConfig::default();
+        Self {
+            collapse_on_submit: cfg.collapse_on_submit,
+            collapse_delay_ms: cfg.collapse_delay_ms,
+            expand_when_wanted: cfg.expand_when_wanted,
+            reveal_when_stalled_ms: cfg.reveal_when_stalled_ms,
+        }
+    }
+}
+
+impl Default for CueSettings {
+    fn default() -> Self {
+        let cues = Cues::default();
+        Self {
+            glow: cues.glow,
+            sound: cues.sound,
+            notify: cues.notify,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -47,6 +105,8 @@ impl Default for Settings {
             // for it; nobody should have to work out why their terminal
             // arrived faded.
             opacity: MAX_OPACITY,
+            window: WindowSettings::default(),
+            cues: CueSettings::default(),
         }
     }
 }
@@ -58,6 +118,21 @@ impl Settings {
     /// assume the number in it is sensible.
     pub fn alpha(&self) -> f64 {
         f64::from(self.opacity.clamp(MIN_OPACITY, MAX_OPACITY)) / 100.0
+    }
+
+    /// The stored preferences as the rules engine wants them.
+    pub fn choreo(&self) -> ChoreoConfig {
+        ChoreoConfig {
+            collapse_on_submit: self.window.collapse_on_submit,
+            collapse_delay_ms: self.window.collapse_delay_ms,
+            expand_when_wanted: self.window.expand_when_wanted,
+            reveal_when_stalled_ms: self.window.reveal_when_stalled_ms,
+            cues: Cues {
+                glow: self.cues.glow,
+                sound: self.cues.sound,
+                notify: self.cues.notify,
+            },
+        }
     }
 }
 
@@ -109,26 +184,41 @@ pub fn apply_to_window<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
-/// Change how see-through the window is, and remember it.
-///
-/// Returns what the opacity ended up as, which is not always what was
-/// asked for: the range is clamped so the window cannot be faded to the
-/// point of being unfindable.
 #[tauri::command]
-pub fn set_window_opacity<R: Runtime>(window: WebviewWindow<R>, percent: u8) -> Result<u8, String> {
-    let mut settings = load();
-    settings.opacity = percent.clamp(MIN_OPACITY, MAX_OPACITY);
-    window.set_opacity(settings.alpha())?;
-    // The window has already changed, so a settings file that cannot be
-    // written costs the user the next launch, not this one.
-    let path = path().ok_or("no home directory to store settings in")?;
-    save_to(&path, &settings)?;
-    Ok(settings.opacity)
+pub fn settings() -> Settings {
+    load()
 }
 
+/// Store new preferences and put them into effect straight away.
+///
+/// Returns what was actually stored, which is not always what was asked
+/// for. The opacity is clamped, and whether the Claude Code hooks are in
+/// place is read back off disk rather than taken from the caller: that
+/// flag is a record of something already done to somebody's config file,
+/// so a stale copy arriving from the interface must not rewrite it.
 #[tauri::command]
-pub fn window_opacity() -> u8 {
-    load().opacity
+pub fn save_settings<R: Runtime>(
+    window: WebviewWindow<R>,
+    choreo: State<'_, Choreographer>,
+    settings: Settings,
+) -> Result<Settings, String> {
+    let stored = load();
+    let next = Settings {
+        claude_hooks_installed: stored.claude_hooks_installed,
+        opacity: settings.opacity.clamp(MIN_OPACITY, MAX_OPACITY),
+        ..settings
+    };
+
+    // Put into effect before it is written, so a settings file that
+    // cannot be saved costs the user their next launch and not this one.
+    choreo.set_config(next.choreo());
+    if next.opacity != stored.opacity {
+        window.set_opacity(next.alpha())?;
+    }
+
+    let path = path().ok_or("no home directory to store settings in")?;
+    save_to(&path, &next)?;
+    Ok(next)
 }
 
 pub fn save_to(path: &Path, settings: &Settings) -> Result<(), String> {
@@ -166,6 +256,15 @@ mod tests {
         let settings = Settings {
             claude_hooks_installed: true,
             opacity: 60,
+            window: WindowSettings {
+                collapse_on_submit: false,
+                collapse_delay_ms: 900,
+                ..WindowSettings::default()
+            },
+            cues: CueSettings {
+                sound: true,
+                ..CueSettings::default()
+            },
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
@@ -202,6 +301,63 @@ mod tests {
                 settings.alpha()
             );
         }
+    }
+
+    #[test]
+    fn a_file_written_before_the_preferences_existed_still_loads() {
+        // The shape v0.1.0 wrote. Everything added since has to arrive as
+        // its default rather than as zero, or an upgrade would silently
+        // turn the choreography off.
+        let path = scratch("v0-1-0-shape");
+        std::fs::write(&path, "claude_hooks_installed = true\nopacity = 100\n").expect("write");
+        let settings = load_from(&path);
+        assert!(settings.claude_hooks_installed);
+        assert_eq!(settings.window, WindowSettings::default());
+        assert_eq!(settings.cues, CueSettings::default());
+        assert_eq!(settings.choreo(), ChoreoConfig::default());
+    }
+
+    #[test]
+    fn a_half_written_table_keeps_the_defaults_for_the_rest() {
+        let path = scratch("partial-table");
+        std::fs::write(&path, "[window]\ncollapse_on_submit = false\n").expect("write");
+        let settings = load_from(&path);
+        assert!(!settings.window.collapse_on_submit);
+        assert_eq!(
+            settings.window.collapse_delay_ms,
+            WindowSettings::default().collapse_delay_ms,
+            "a key the user did not write must not read as zero"
+        );
+    }
+
+    #[test]
+    fn stored_preferences_reach_the_rules_engine() {
+        let settings = Settings {
+            window: WindowSettings {
+                expand_when_wanted: false,
+                collapse_delay_ms: 250,
+                ..WindowSettings::default()
+            },
+            cues: CueSettings {
+                glow: false,
+                sound: true,
+                notify: true,
+            },
+            ..Settings::default()
+        };
+        let cfg = settings.choreo();
+        assert!(!cfg.expand_when_wanted);
+        assert_eq!(cfg.collapse_delay_ms, 250);
+        assert!(!cfg.cues.glow);
+        assert!(cfg.cues.sound);
+        assert!(cfg.cues.notify);
+    }
+
+    #[test]
+    fn the_defaults_are_the_ones_the_rules_engine_already_had() {
+        // Two copies of the same numbers would drift. This is the check
+        // that they have not.
+        assert_eq!(Settings::default().choreo(), ChoreoConfig::default());
     }
 
     #[test]
