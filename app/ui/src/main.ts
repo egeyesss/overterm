@@ -20,9 +20,13 @@ type PtyEvent =
 
 type Cues = { glow: boolean; sound: boolean; notify: boolean };
 
+/// Font sizes the zoom shortcuts step between, smallest to largest.
+const FONT_SIZES = [9, 10, 11, 12, 13, 14, 16, 18, 20, 24];
+const DEFAULT_FONT_SIZE = 13;
+
 const term = new Terminal({
   cursorBlink: true,
-  fontSize: 13,
+  fontSize: DEFAULT_FONT_SIZE,
   fontFamily: 'Menlo, Monaco, "SF Mono", monospace',
   scrollback: 10_000,
   // Required by the Unicode 11 addon below, which registers a character
@@ -180,6 +184,59 @@ listen<{ mode: WindowMode }>('overterm://mode', (event) => applyMode(event.paylo
 // where you are when you opened it and found what you wanted.
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !findBox.hidden) closeFind();
+});
+
+// --- terminal shortcuts ----------------------------------------------
+
+/// Resize the font a step at a time, then tell the PTY its new size.
+///
+/// The terminal is measured in cells, so a bigger font means fewer
+/// columns. Refitting is what tells the program on the other end to
+/// redraw itself narrower instead of wrapping at the old width.
+function zoom(steps: number) {
+  const current = FONT_SIZES.indexOf(term.options.fontSize ?? DEFAULT_FONT_SIZE);
+  const from = current === -1 ? FONT_SIZES.indexOf(DEFAULT_FONT_SIZE) : current;
+  const next = Math.min(Math.max(from + steps, 0), FONT_SIZES.length - 1);
+  term.options.fontSize = FONT_SIZES[next];
+  fit.fit();
+}
+
+function resetZoom() {
+  term.options.fontSize = DEFAULT_FONT_SIZE;
+  fit.fit();
+}
+
+/// Copy the selection, and report whether there was one to copy.
+///
+/// The terminal draws to a canvas, so there is no selected text for the
+/// webview to copy on its own. Without this, Cmd+C over a selection does
+/// nothing at all.
+function copySelection(): boolean {
+  const selection = term.getSelection();
+  if (!selection) return false;
+  navigator.clipboard.writeText(selection).catch(() => {});
+  return true;
+}
+
+/// Read the clipboard and send it to the session.
+///
+/// Only used by the right-click below. Cmd+V is left alone, because the
+/// terminal already receives a real paste event and handling it here as
+/// well would send the clipboard twice.
+function paste() {
+  navigator.clipboard
+    .readText()
+    .then((text) => {
+      if (text) write(text);
+    })
+    .catch(() => {});
+}
+
+// Right-click pastes, the way it does in a terminal rather than the way
+// it does in a browser.
+container.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  paste();
 });
 
 // --- find ------------------------------------------------------------
@@ -406,11 +463,31 @@ async function start() {
       write(NEWLINE);
       return false;
     }
-    if (event.metaKey && event.key === 'f') {
-      openFind();
-      return false;
+    if (!event.metaKey) return true;
+    switch (event.key) {
+      case 'f':
+        openFind();
+        return false;
+      case 'c':
+        // Nothing selected means nothing to copy, so let the key through
+        // rather than swallow it.
+        return !copySelection();
+      case 'k':
+        term.clear();
+        return false;
+      case '=':
+      case '+':
+        zoom(1);
+        return false;
+      case '-':
+        zoom(-1);
+        return false;
+      case '0':
+        resetZoom();
+        return false;
+      default:
+        return true;
     }
-    return true;
   });
 
   term.onData(write);
