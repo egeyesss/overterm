@@ -116,12 +116,26 @@ pub struct AgentProfile {
 /// Deliberately short. Anything else is two lines in a config file, and
 /// guessing at the process names of tools nobody here has run is how you
 /// end up shipping a mapping that is quietly wrong.
-/// Name to match, label, colour, and what it looks like while working.
+/// Agents recognised out of the box: name to match, label, colour, and
+/// what the program puts on screen for as long as it is working.
 ///
 /// The colour is the one the tool draws itself in, so a tab reads as the
 /// same thing as the terminal underneath it.
-const BUILTIN_AGENTS: &[(&str, &str, &str, Option<&str>)] =
-    &[("claude", "Claude", "#d97757", Some("esc to interrupt"))];
+///
+/// A busy pattern is only filled in where the wording is actually known.
+/// Guessing one is worse than leaving it out: a pattern that never
+/// matches reads as support while the window quietly decides every turn
+/// ended early. Anything left as `None` falls back to the default and can
+/// be filled in from a config file by whoever runs that tool.
+const BUILTIN_AGENTS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("claude", "Claude", "#d97757", Some("esc to interrupt")),
+    // Wording taken from a real transcript, which reads
+    // "Awaiting Further Direction (esc to cancel, 40s)".
+    ("gemini", "Gemini", "#4285f4", Some("esc to cancel")),
+    ("codex", "Codex", "#10a37f", None),
+    ("aider", "Aider", "#14b8a6", None),
+    ("opencode", "opencode", "#f59e0b", None),
+];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the
 /// terminal; nothing on this side acts on them.
@@ -747,6 +761,32 @@ mod tests {
             settings.profile_for(path).busy_pattern.is_some(),
             "and its detection patterns, which the version name would have missed"
         );
+    }
+
+    #[test]
+    fn the_agents_that_ship_are_all_usable() {
+        let settings = Settings::default();
+        for (program, label, ..) in BUILTIN_AGENTS {
+            let agent = settings.label_for(&format!("/usr/local/bin/{program}"));
+            assert_eq!(&agent.label, label);
+            assert_eq!(&agent.id, program, "the id keys the drawn mark");
+            assert!(agent.color.is_some(), "{program} has no colour");
+        }
+    }
+
+    #[test]
+    fn every_pattern_that_ships_compiles() {
+        // These are written by hand in the table above, so a typo would
+        // otherwise only turn up as an agent silently losing its profile.
+        let settings = Settings::default();
+        for (program, _, _, busy) in BUILTIN_AGENTS {
+            let profile = settings.profile_for(&format!("/usr/local/bin/{program}"));
+            assert_eq!(
+                profile.busy_pattern.is_some(),
+                busy.is_some(),
+                "{program} pattern did not survive being compiled"
+            );
+        }
     }
 
     #[test]

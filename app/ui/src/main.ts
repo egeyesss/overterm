@@ -844,22 +844,19 @@ function handleTerminalKey(event: KeyboardEvent): boolean {
 /// Longest text label a tab has room for before it is cut off.
 const TAB_LABEL_MAX = 5;
 
-/// Marks drawn for agents the app knows, keyed on the program name the
-/// backend matched. Keyed on that rather than the label so renaming an
-/// agent in the settings file does not cost it its icon.
+/// Marks for the agents the app recognises, keyed on the program name
+/// the backend matched. Keyed on that rather than the label, so renaming
+/// an agent in the settings file does not cost it its icon.
 ///
-/// Drawn here rather than shipping anybody's logo file: it is a
-/// recognisable shape in their own colour, which is what a tab needs, and
-/// the repo stays free of somebody else's brand assets.
+/// Each one carries its own colours, because a brand mark is not always
+/// one flat colour. An agent added through the settings file has no entry
+/// here and falls back to a glyph and a colour, which is why both of
+/// those exist.
 const MARKS: Record<string, string> = {
-  claude: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="11.22" y="2.60" width="1.55" height="9.40" rx="0.78" transform="rotate(0 12 12)"/><rect x="11.38" y="5.40" width="1.25" height="6.60" rx="0.62" transform="rotate(30 12 12)"/><rect x="11.22" y="3.80" width="1.55" height="8.20" rx="0.78" transform="rotate(60 12 12)"/><rect x="11.38" y="5.10" width="1.25" height="6.90" rx="0.62" transform="rotate(90 12 12)"/><rect x="11.22" y="2.60" width="1.55" height="9.40" rx="0.78" transform="rotate(120 12 12)"/><rect x="11.38" y="5.40" width="1.25" height="6.60" rx="0.62" transform="rotate(150 12 12)"/><rect x="11.22" y="3.80" width="1.55" height="8.20" rx="0.78" transform="rotate(180 12 12)"/><rect x="11.38" y="5.10" width="1.25" height="6.90" rx="0.62" transform="rotate(210 12 12)"/><rect x="11.22" y="2.60" width="1.55" height="9.40" rx="0.78" transform="rotate(240 12 12)"/><rect x="11.38" y="5.40" width="1.25" height="6.60" rx="0.62" transform="rotate(270 12 12)"/><rect x="11.22" y="3.80" width="1.55" height="8.20" rx="0.78" transform="rotate(300 12 12)"/><rect x="11.38" y="5.10" width="1.25" height="6.90" rx="0.62" transform="rotate(330 12 12)"/></svg>',
+  claude: '""" + claude + """',
+  gemini: '""" + gemini + """',
 };
 
-/// What a tab shows: one glyph for an agent we know, otherwise a short
-/// piece of its name.
-///
-/// The rail is narrow on purpose, so a long name is trimmed rather than
-/// allowed to spill out of its box. The full one stays in the tooltip.
 function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null }) {
   const el = session.tab.querySelector('.label') as HTMLElement;
   const mark = MARKS[agent.id];
