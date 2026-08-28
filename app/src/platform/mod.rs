@@ -80,6 +80,15 @@ pub fn process_path(pid: i32) -> Option<String> {
     imp::process_path(pid)
 }
 
+/// Command line of the process running as `pid`.
+///
+/// The third thing a port has to write. Most agent CLIs are npm
+/// packages, so the program on the terminal is `node` and only the script
+/// path it was given says which tool it actually is.
+pub fn process_args(pid: i32) -> Option<Vec<String>> {
+    imp::process_args(pid)
+}
+
 /// Tell the OS this is an overlay rather than an ordinary app.
 ///
 /// Separate from the window calls because it is a property of the

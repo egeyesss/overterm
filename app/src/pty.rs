@@ -142,6 +142,10 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
     // number, so the process is called something like 2.1.250 and only
     // the path it sits in says what it is.
     let path = crate::platform::process_path(pid).or_else(|| crate::platform::process_name(pid))?;
+    // Most of these tools are npm packages, so the program on the
+    // terminal is node and only the script path it was handed says which
+    // tool it is. Without this every one of them is called "node".
+    let args = crate::platform::process_args(pid).unwrap_or_default();
     let settings = crate::settings::load();
 
     // The same lookup answers both questions. Knowing which program owns
@@ -150,7 +154,7 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
     // looking for nothing: between batches of output an agent's cursor
     // rests in its input box, and without a pattern that holds the state
     // the window decides the turn ended and comes back mid-answer.
-    let profile = settings.profile_for(&path);
+    let profile = settings.profile_for(&path, &args);
     {
         let sessions = app.state::<Sessions>();
         let sessions = sessions.0.lock().unwrap();
@@ -159,13 +163,13 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
         }
     }
 
-    let agent = settings.label_for(&path);
+    let agent = settings.label_for(&path, &args);
     // A program writing our markers is Claude Code, exactly, because
     // nothing else has them installed. That outranks anything read off a
     // path, and it is what covers a tool whose executable is named after
     // something other than itself.
     if reports_itself && agent.icon.is_none() {
-        return Some(settings.label_for("claude"));
+        return Some(settings.label_for("claude", &[]));
     }
     Some(agent)
 }

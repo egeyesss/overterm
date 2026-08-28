@@ -141,15 +141,24 @@ body.attention-needs::after {
 /* A mark fills the tab, which is what makes it read as an icon rather
    than as a character that happens to be in the box. The files size
    themselves in em, so the size is set here and not in the markup. */
-.tab .label svg {
+.tab .label svg,
+.tab .label img {
   width: 19px;
   height: 19px;
   display: block;
   opacity: 0.9;
 }
 
+/* A bitmap mark is not square-cropped like the drawn ones, so it is
+   fitted rather than stretched. */
+.tab .label img {
+  object-fit: contain;
+}
+
 .tab.active .label svg,
-.tab:hover .label svg {
+.tab.active .label img,
+.tab:hover .label svg,
+.tab:hover .label img {
   opacity: 1;
 }
 

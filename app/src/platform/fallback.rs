@@ -49,6 +49,14 @@ pub fn process_path(_pid: i32) -> Option<String> {
     None
 }
 
+/// Ports fill this in too. Linux has it as `/proc/<pid>/cmdline`, which
+/// is already NUL-separated and needs no unpacking. It matters because
+/// most of these tools are npm packages, so the program is `node` and
+/// only the arguments say which tool it is.
+pub fn process_args(_pid: i32) -> Option<Vec<String>> {
+    None
+}
+
 /// Nothing to do: the Dock and Spaces are a macOS idea.
 pub fn make_accessory<R: Runtime>(_app: &mut App<R>) {}
 

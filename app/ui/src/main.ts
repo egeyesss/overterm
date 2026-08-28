@@ -10,6 +10,8 @@ import codexMark from './brand/codex.svg?raw';
 import geminiMark from './brand/gemini.svg?raw';
 import kimiMark from './brand/kimi.svg?raw';
 import ollamaMark from './brand/ollama.svg?raw';
+// A bitmap, so this one is a URL rather than markup.
+import antigravityMark from './brand/antigravity.png';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -866,13 +868,16 @@ const MARKS: Record<string, string> = {
   codex: codexMark,
   kimi: kimiMark,
   ollama: ollamaMark,
+  antigravity: antigravityMark,
 };
 
 function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null }) {
   const el = session.tab.querySelector('.label') as HTMLElement;
   const mark = MARKS[agent.id];
   if (mark) {
-    el.innerHTML = mark;
+    // Markup goes in as it is; anything else is a file the bundler gave
+    // us a URL for, so it needs an element to hang off.
+    el.innerHTML = mark.startsWith('<') ? mark : `<img src="${mark}" alt="" />`;
   } else if (agent.icon) {
     el.textContent = agent.icon;
   } else {
