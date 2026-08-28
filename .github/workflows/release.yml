@@ -63,6 +63,46 @@ jobs:
       - name: Build
         run: npm run tauri build -- --target universal-apple-darwin
 
+      # A green build proves the code compiles and says nothing about what
+      # ended up in the bundle. The first 0.1.0 build predated the
+      # uninstall flag and would have shipped without it, because cargo had
+      # rebuilt and the bundle had not.
+      - name: Check the artifact
+        run: |
+          set -eu
+          app=target/universal-apple-darwin/release/bundle/macos/OverTerm.app
+          bin="$app/Contents/MacOS/overterm"
+          version=$(jq -r .version app/tauri.conf.json)
+
+          archs=$(lipo -archs "$bin")
+          echo "architectures: $archs"
+          for want in arm64 x86_64; do
+            case " $archs " in
+              *" $want "*) ;;
+              *) echo "::error::the binary is missing $want"; exit 1 ;;
+            esac
+          done
+
+          # The bundle carries its own copy of the version, so this is what
+          # catches a rebuilt binary sitting inside a stale bundle.
+          built=$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")
+          echo "bundle version: $built"
+          if [ "$built" != "$version" ]; then
+            echo "::error::the bundle says $built and the source says $version"
+            exit 1
+          fi
+
+          # Runs the real binary out of the real bundle, which proves the
+          # app executes and that the flag a package manager calls on the
+          # way out is in this build. A runner has no hook entries, so it
+          # reports that and changes nothing.
+          "$bin" --uninstall-hooks
+
+          # The frontend is built by a separate command, so it can be
+          # missing from a build that reported success.
+          test -s app/ui/dist/index.html \
+            || { echo "::error::the frontend was never built"; exit 1; }
+
       - name: Package the app
         run: |
           set -eu
