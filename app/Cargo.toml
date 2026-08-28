@@ -17,6 +17,9 @@ tauri-plugin-global-shortcut = "2"
 toml = "1"
 serde.workspace = true
 serde_json.workspace = true
+# Reaches the OS notification centre, which is the only cue that works
+# when the window is hidden entirely.
+tauri-plugin-notification = "2.3.3"
 # Hands a URL to the user's browser. Without it a link clicked in the
 # terminal navigates the webview itself and the app becomes a browser.
 tauri-plugin-opener = "2.5.4"

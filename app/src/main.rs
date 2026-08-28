@@ -42,6 +42,7 @@ fn main() {
         .manage(pty::Sessions::default())
         .manage(Choreographer::new(settings::load().choreo()))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
