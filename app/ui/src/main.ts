@@ -60,7 +60,10 @@ term.loadAddon(search);
 // which in a webview navigates the app away from itself.
 term.loadAddon(
   new WebLinksAddon((_event, uri) => {
-    openUrl(uri).catch(() => {});
+    // Reported rather than swallowed. A link that cannot be opened is
+    // worth knowing about, and a silent catch here is what hid the URL
+    // scope being missing from the app's permissions.
+    openUrl(uri).catch((err) => console.error(`could not open ${uri}:`, err));
   }),
 );
 
