@@ -95,6 +95,7 @@ fn main() {
             hooks::install_hooks,
             hooks::uninstall_hooks,
             hooks::hooks_installed,
+            settings::dismiss_hooks_notice,
             settings::settings,
             settings::save_settings,
         ])

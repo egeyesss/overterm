@@ -39,6 +39,14 @@ pub struct Settings {
     /// offered to set it up.
     pub claude_hooks_installed: bool,
 
+    /// Whether the user has been told, once, that the app wrote into
+    /// Claude Code's settings file.
+    ///
+    /// Backend state rather than a preference, and set only by dismissing
+    /// the notice. Editing somebody's config file silently is not
+    /// something a README paragraph covers on its own.
+    pub claude_hooks_notice_seen: bool,
+
     /// How see-through the window is, as a percentage.
     pub opacity: u8,
 
@@ -127,6 +135,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             claude_hooks_installed: false,
+            claude_hooks_notice_seen: false,
             // Opaque. Anyone who wants to see through the overlay asks
             // for it; nobody should have to work out why their terminal
             // arrived faded.
@@ -216,6 +225,19 @@ pub fn settings() -> Settings {
     load()
 }
 
+/// Record that the user has seen what the app did to their Claude Code
+/// settings, so it is not said twice.
+#[tauri::command]
+pub fn dismiss_hooks_notice() -> Result<(), String> {
+    let mut settings = load();
+    if settings.claude_hooks_notice_seen {
+        return Ok(());
+    }
+    settings.claude_hooks_notice_seen = true;
+    let path = path().ok_or("no home directory to store settings in")?;
+    save_to(&path, &settings)
+}
+
 /// Store new preferences and put them into effect straight away.
 ///
 /// Returns what was actually stored, which is not always what was asked
@@ -233,6 +255,7 @@ pub fn save_settings<R: Runtime>(
     let opacity = settings.opacity.clamp(MIN_OPACITY, MAX_OPACITY);
     let next = Settings {
         claude_hooks_installed: stored.claude_hooks_installed,
+        claude_hooks_notice_seen: stored.claude_hooks_notice_seen,
         opacity,
         ..settings
     };
@@ -283,6 +306,7 @@ mod tests {
         let path = scratch("round-trip");
         let settings = Settings {
             claude_hooks_installed: true,
+            claude_hooks_notice_seen: true,
             opacity: 60,
             window: WindowSettings {
                 collapse_on_submit: false,
@@ -333,6 +357,15 @@ mod tests {
                 settings.alpha()
             );
         }
+    }
+
+    #[test]
+    fn a_fresh_install_has_not_been_told_anything_yet() {
+        // Both start false, so the very first launch installs the hooks
+        // and then has something to say about it.
+        let settings = Settings::default();
+        assert!(!settings.claude_hooks_installed);
+        assert!(!settings.claude_hooks_notice_seen);
     }
 
     #[test]

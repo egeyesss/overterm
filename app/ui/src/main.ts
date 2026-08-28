@@ -30,6 +30,7 @@ type Cues = { glow: boolean; sound: boolean; notify: boolean };
 /// config.toml are then the same names.
 type Settings = {
   claude_hooks_installed: boolean;
+  claude_hooks_notice_seen: boolean;
   opacity: number;
   window: {
     collapse_on_submit: boolean;
@@ -496,6 +497,25 @@ claudeHooks.addEventListener('change', () => {
     });
 });
 
+const firstRun = field<HTMLElement>('first-run');
+
+/// Say once that the app wrote into a config file the user owns.
+///
+/// It reports itself on stderr, which nobody sees outside a dev build, so
+/// on an installed copy this was completely silent.
+function maybeShowFirstRun(current: Settings) {
+  if (!current.claude_hooks_installed || current.claude_hooks_notice_seen) return;
+  firstRun.hidden = false;
+}
+
+field<HTMLButtonElement>('first-run-ok').addEventListener('click', () => {
+  firstRun.hidden = true;
+  invoke('dismiss_hooks_notice').catch(() => {
+    // Saying it twice is better than the write failing loudly over a
+    // terminal somebody is trying to use.
+  });
+});
+
 function openSettings() {
   if (mode !== 'panel') return; // the sheet has no room in the bar
   // Read on every open rather than trusting the copy in memory, so a
@@ -678,7 +698,9 @@ async function start() {
   // Before the session spawns: the terminal reports its size to the PTY
   // on spawn, and that size depends on the font.
   try {
-    showSettings(await invoke<Settings>('settings'));
+    const current = await invoke<Settings>('settings');
+    showSettings(current);
+    maybeShowFirstRun(current);
   } catch {
     // The defaults the terminal was built with are already correct.
   }

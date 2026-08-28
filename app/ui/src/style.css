@@ -278,6 +278,56 @@ body.state-busy .pill .dot {
   color: var(--needs);
 }
 
+/* First-run notice. */
+#first-run {
+  position: absolute;
+  top: 32px;
+  left: 10px;
+  right: 10px;
+  z-index: 25;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+#first-run[hidden] {
+  display: none;
+}
+
+#first-run p {
+  flex: 1;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+#first-run code {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+#first-run button {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#first-run button:hover {
+  border-color: var(--dim);
+}
+
 /* Settings sheet. Covers the terminal rather than resizing it, so the
    agent's TUI is not reflowed by opening a preferences panel. */
 #settings {
@@ -414,7 +464,8 @@ body.state-busy .pill .dot {
 body.mode-bar #terminal,
 body.mode-bar #titlebar,
 body.mode-bar #find,
-body.mode-bar #settings {
+body.mode-bar #settings,
+body.mode-bar #first-run {
   display: none;
 }
 

@@ -65,6 +65,17 @@
       </button>
     </div>
 
+    <!-- Said once, on the launch that put the entries in. Overlays the
+         terminal rather than taking a row, so it cannot reflow a TUI. -->
+    <div id="first-run" hidden>
+      <p>
+        OverTerm added four entries to <code>~/.claude/settings.json</code> so it
+        can read exactly when Claude Code starts, finishes or asks you something.
+        Turn it off any time in settings.
+      </p>
+      <button id="first-run-ok">Got it</button>
+    </div>
+
     <!-- Settings, as a sheet over the terminal rather than a third window
          mode. A mode would mean teaching the choreography rules about a
          view that has nothing to do with the agent. -->
