@@ -63,7 +63,30 @@ pub struct Settings {
     pub window: WindowSettings,
     pub cues: CueSettings,
     pub terminal: TerminalSettings,
+
+    /// Extra agents, keyed on the name of the program running in a
+    /// session. Empty by default and merged over the built-in list below,
+    /// so adding one of your own does not silently drop the ones that
+    /// ship with the app.
+    pub agents: Vec<AgentProfile>,
 }
+
+/// What OverTerm knows about one command it might find in a session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProfile {
+    /// Process name to match, as the operating system reports it.
+    #[serde(rename = "match")]
+    pub program: String,
+    /// What the tab says. Kept short: the rail is narrow.
+    pub label: String,
+}
+
+/// The agents that ship with the app.
+///
+/// Deliberately short. Anything else is two lines in a config file, and
+/// guessing at the process names of tools nobody here has run is how you
+/// end up shipping a mapping that is quietly wrong.
+const BUILTIN_AGENTS: &[(&str, &str)] = &[("claude", "Claude")];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the
 /// terminal; nothing on this side acts on them.
@@ -149,6 +172,7 @@ impl Default for Settings {
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
+            agents: Vec::new(),
         }
     }
 }
@@ -160,6 +184,23 @@ impl Settings {
     /// assume the number in it is sensible.
     pub fn alpha(&self) -> f64 {
         f64::from(self.opacity.clamp(MIN_OPACITY, MAX_OPACITY)) / 100.0
+    }
+
+    /// What to call a session running `program`.
+    ///
+    /// The user's own entries are checked first so one of them can
+    /// correct a built-in that has gone stale, and an unknown program is
+    /// its own label: a session sitting at a shell should say `zsh`
+    /// rather than nothing at all.
+    pub fn label_for(&self, program: &str) -> String {
+        if let Some(profile) = self.agents.iter().find(|a| a.program == program) {
+            return profile.label.clone();
+        }
+        BUILTIN_AGENTS
+            .iter()
+            .find(|(name, _)| *name == program)
+            .map(|(_, label)| (*label).to_string())
+            .unwrap_or_else(|| program.to_string())
     }
 
     /// The stored preferences as the rules engine wants them.
@@ -385,6 +426,10 @@ mod tests {
                 font_size: 16,
                 ..TerminalSettings::default()
             },
+            agents: vec![AgentProfile {
+                program: "kimi".into(),
+                label: "K3".into(),
+            }],
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
@@ -421,6 +466,43 @@ mod tests {
                 settings.alpha()
             );
         }
+    }
+
+    #[test]
+    fn a_known_agent_gets_its_name_and_anything_else_gets_its_own() {
+        let settings = Settings::default();
+        assert_eq!(settings.label_for("claude"), "Claude");
+        // A shell is not an agent, and a tab saying zsh is more use than
+        // a tab saying nothing.
+        assert_eq!(settings.label_for("zsh"), "zsh");
+    }
+
+    #[test]
+    fn adding_an_agent_does_not_drop_the_built_in_ones() {
+        // The trap this is guarding: a list in a config file replaces the
+        // default list wholesale, so somebody adding one entry would have
+        // quietly lost Claude.
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "kimi".into(),
+                label: "K3".into(),
+            }],
+            ..Settings::default()
+        };
+        assert_eq!(settings.label_for("kimi"), "K3");
+        assert_eq!(settings.label_for("claude"), "Claude");
+    }
+
+    #[test]
+    fn a_users_entry_can_correct_a_built_in_one() {
+        let settings = Settings {
+            agents: vec![AgentProfile {
+                program: "claude".into(),
+                label: "CC".into(),
+            }],
+            ..Settings::default()
+        };
+        assert_eq!(settings.label_for("claude"), "CC");
     }
 
     #[test]

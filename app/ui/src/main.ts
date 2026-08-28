@@ -16,7 +16,8 @@ type WindowMode = 'bar' | 'panel';
 type PtyEvent =
   | { event: 'output'; data: { bytes: number[] } }
   | { event: 'agentStateChanged'; data: { state: AgentState; cause: string } }
-  | { event: 'exited'; data: { code: number | null } };
+  | { event: 'exited'; data: { code: number | null } }
+  | { event: 'agentChanged'; data: { label: string } };
 
 type Cues = { glow: boolean; sound: boolean };
 
@@ -912,6 +913,8 @@ async function addSession(): Promise<void> {
       term.write(new Uint8Array(msg.data.bytes));
     } else if (msg.event === 'agentStateChanged') {
       setAgentState(session, msg.data.state, msg.data.cause);
+    } else if (msg.event === 'agentChanged') {
+      setLabel(session, msg.data.label);
     } else {
       const code = msg.data.code ?? 'signal';
       term.write(`\r\n\x1b[90m[process exited: ${code}]\x1b[0m\r\n`);

@@ -62,6 +62,15 @@ impl<R: Runtime> PlatformWindow for WebviewWindow<R> {
     }
 }
 
+/// Name of the program running as `pid`.
+///
+/// The second thing in this module that needs writing for a port, and
+/// the only one that is not about windows. It is what lets a tab say
+/// which agent is in it without the agent having to cooperate.
+pub fn process_name(pid: i32) -> Option<String> {
+    imp::process_name(pid)
+}
+
 /// Tell the OS this is an overlay rather than an ordinary app.
 ///
 /// Separate from the window calls because it is a property of the

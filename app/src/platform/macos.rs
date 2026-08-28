@@ -52,6 +52,36 @@ where
         .map_err(|e| e.to_string())
 }
 
+/// Name of the program running as `pid`, if it is still there.
+///
+/// `proc_name` is asked directly rather than shelling out to `ps`,
+/// because this is asked once a second per session and an app that
+/// spawns a process on a timer has no business calling itself
+/// lightweight.
+///
+/// The answer is the executable's name, so it is `claude`, `zsh` or
+/// `nvim`, and it needs no cooperation from the program itself. Two
+/// things it cannot do: the kernel truncates it to sixteen characters,
+/// and a tool that runs through an interpreter reports the interpreter,
+/// so a CLI shipped as a script shows up as `node` or `python`. The
+/// marker a hooked program writes is what covers that case exactly.
+pub fn process_name(pid: i32) -> Option<String> {
+    // Long enough for the truncated name the kernel returns, with room
+    // to spare rather than a number worked out from a header.
+    let mut buf = [0u8; 256];
+
+    // Safety: the buffer is ours, and the length passed is its real one.
+    // A pid that has gone returns zero without writing anything.
+    let written = unsafe { libc::proc_name(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+
+    let name = std::str::from_utf8(&buf[..written as usize]).ok()?;
+    let name = name.trim_end_matches('\0').trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// Fade the whole window, chrome and terminal together.
 ///
 /// `alpha` is 0.0 to 1.0. AppKit composites the window at this alpha, so

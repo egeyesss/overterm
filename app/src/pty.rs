@@ -18,7 +18,7 @@ use overterm_core::detect::replay::{Dir, Event, append_event, resize_payload};
 use overterm_core::{AgentState, Detector, PtySession, SpawnConfig, StateChange};
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::choreograph::Choreographer;
 
@@ -88,6 +88,11 @@ pub enum PtyEvent {
     Exited {
         code: Option<u32>,
     },
+    /// A different program owns this session's terminal now, so the tab
+    /// should say something else.
+    AgentChanged {
+        label: String,
+    },
 }
 
 pub struct SessionHandle {
@@ -100,6 +105,35 @@ pub struct SessionHandle {
 
 #[derive(Default)]
 pub struct Sessions(Mutex<HashMap<String, SessionHandle>>);
+
+/// How often the detector is given a chance to conclude something during
+/// silence.
+const TICK_MS: u64 = 100;
+
+/// How many of those ticks pass between asking what is running in a
+/// session. Once a second: it is a question about a person starting and
+/// leaving programs, so asking ten times a second buys nothing.
+const IDENTIFY_EVERY: u32 = 10;
+
+/// What to call whatever currently owns this session's terminal.
+///
+/// A session is a shell, and the shell runs other programs in it, so this
+/// changes as the user starts and leaves things. It is the shell's own
+/// name at a prompt and the agent's while one is running, which is what
+/// makes it a way to tell what a session is doing without the program
+/// having to cooperate.
+fn identify(app: &AppHandle, session_id: &str) -> Option<String> {
+    let pid = {
+        let sessions = app.state::<Sessions>();
+        let sessions = sessions.0.lock().unwrap();
+        sessions.get(session_id)?.session.foreground_pid()?
+    };
+    // The lock is dropped before this: reading the settings file and
+    // asking the kernel about a process both take longer than any other
+    // session should have to wait to report a state change.
+    let program = crate::platform::process_name(pid)?;
+    Some(crate::settings::load().label_for(&program))
+}
 
 /// Report a batch of transitions: the overlay reacts to them, and the
 /// frontend shows what the detector concluded.
@@ -235,16 +269,28 @@ pub fn spawn_session(
         });
     }
 
-    // Ticker: lets quiescence conclusions fire while the PTY is silent.
+    // Ticker: lets quiescence conclusions fire while the PTY is silent,
+    // and keeps an eye on what is running in the session.
     {
         let ticker_id = id.clone();
         let alive = alive.clone();
         let choreo = choreo.inner().clone();
         std::thread::spawn(move || {
+            let mut ticks = 0u32;
+            let mut label = String::new();
             while alive.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(TICK_MS));
                 let changes = detector.lock().unwrap().tick(Instant::now());
                 emit_changes(&app, &choreo, &ticker_id, &on_event, changes);
+
+                ticks += 1;
+                if ticks.is_multiple_of(IDENTIFY_EVERY)
+                    && let Some(next) = identify(&app, &ticker_id)
+                    && next != label
+                {
+                    label = next.clone();
+                    let _ = on_event.send(PtyEvent::AgentChanged { label: next });
+                }
             }
         });
     }
