@@ -6,6 +6,9 @@
   --busy: #e0af68;
   --done: #9ece6a;
   --needs: #f7768e;
+  /* Search hits. Painted by xterm onto the canvas rather than by CSS,
+     but it is the same palette, so it lives with the rest of it. */
+  --match: #3d59a1;
 }
 
 html,

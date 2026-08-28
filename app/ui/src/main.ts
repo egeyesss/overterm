@@ -94,6 +94,22 @@ const terminalsEl = document.getElementById('terminals') as HTMLDivElement;
 const tabsEl = document.getElementById('tabs') as HTMLElement;
 const tabAdd = document.getElementById('tab-add') as HTMLButtonElement;
 
+/// Read one palette value out of the stylesheet.
+///
+/// The terminal is drawn by xterm and the chrome around it by CSS, and
+/// they have to agree. Keeping the colours in both places means the first
+/// person to change one of them silently splits the window in half, so the
+/// stylesheet is the only copy and this reads it back.
+///
+/// An empty answer means the token is missing or the stylesheet has not
+/// arrived. Say so rather than substituting a colour, because a second
+/// colour written here is the thing being removed.
+function token(name: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (!value) console.error(`[theme] ${name} is not defined in the stylesheet`);
+  return value;
+}
+
 function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
   const term = new Terminal({
     cursorBlink: true,
@@ -109,9 +125,9 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
     // working at all, and Claude Code's other Option shortcuts.
     macOptionIsMeta: true,
     theme: {
-      background: '#1a1b26',
-      foreground: '#c0caf5',
-      cursor: '#c0caf5',
+      background: token('--bg'),
+      foreground: token('--fg'),
+      cursor: token('--fg'),
     },
   });
 
@@ -356,15 +372,23 @@ const findCount = document.getElementById('find-count')!;
 
 // Matches have to be painted by the addon: the terminal is a canvas, so
 // there is no text node to highlight. Colours come from the same palette
-// as the rest of the chrome.
-const findDecorations = {
-  matchBackground: '#3d59a1',
-  matchBorder: '#3d59a1',
-  matchOverviewRuler: '#3d59a1',
-  activeMatchBackground: '#e0af68',
-  activeMatchBorder: '#e0af68',
-  activeMatchColorOverviewRuler: '#e0af68',
-};
+// as the rest of the chrome, which means reading them rather than
+// repeating them.
+//
+// Built on demand rather than once at module scope, because reading a
+// custom property before the stylesheet is applied returns nothing.
+function findDecorations() {
+  const match = token('--match');
+  const active = token('--busy');
+  return {
+    matchBackground: match,
+    matchBorder: match,
+    matchOverviewRuler: match,
+    activeMatchBackground: active,
+    activeMatchBorder: active,
+    activeMatchColorOverviewRuler: active,
+  };
+}
 
 function runFind(direction: 'next' | 'previous') {
   const search = active?.search;
@@ -376,7 +400,7 @@ function runFind(direction: 'next' | 'previous') {
     findBox.classList.remove('no-matches');
     return;
   }
-  const options = { decorations: findDecorations };
+  const options = { decorations: findDecorations() };
   if (direction === 'next') search.findNext(query, options);
   else search.findPrevious(query, options);
 }
