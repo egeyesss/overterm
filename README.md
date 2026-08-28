@@ -25,6 +25,14 @@ Free, open source, tool-agnostic, with a portable core.
   the two views
 - Floats above other windows on every Space, including over full-screen apps
 - `Cmd+Shift+O` from anywhere summons or hides it
+- Runs several sessions at once, each in its own tab, labelled with
+  whichever agent is in it. The window only gets out of your way once
+  every session is busy, and comes back as soon as one of them wants you
+- Terminal basics that a terminal should have: find, clickable links,
+  GPU rendering, and multi-line prompts on Shift+Enter
+- Settings for the window behaviour, the summon shortcut, how see-through
+  the window is, the font and the scrollback, all applied without a
+  restart
 
 ## Install
 
@@ -111,12 +119,12 @@ back to reading the terminal, which is what every other CLI gets.
 
 ## Stack
 
-- **Tauri v2** — app shell (small footprint; an always-on-top terminal has no
+- **Tauri v2**: app shell (small footprint; an always-on-top terminal has no
   business using 200 MB of RAM)
-- **Rust core crate** — PTY sessions via `portable-pty` (macOS/Linux/Windows-ConPTY),
+- **Rust core crate**: PTY sessions via `portable-pty` (macOS/Linux/Windows-ConPTY),
   no UI dependencies
-- **xterm.js** — terminal rendering in the webview
-- **objc2** — the AppKit calls a floating overlay needs on macOS, behind a
+- **xterm.js**: terminal rendering in the webview
+- **objc2**: the AppKit calls a floating overlay needs on macOS, behind a
   single trait so a Windows or Linux port only has to implement that one piece
 
 ## Development
