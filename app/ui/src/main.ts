@@ -210,6 +210,18 @@ function elapsed(ms: number): string {
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
+/// Cut a long path from the left, keeping the end.
+///
+/// The end is the part that says which project it is, so that is the half
+/// worth keeping. Done here rather than with CSS: `direction: rtl` moves
+/// the ellipsis to the front but also reorders the path, which turned
+/// `~/dev/overterm` into `dev/overterm/~` on screen.
+const CWD_MAX = 34;
+function shortenPath(path: string): string {
+  if (path.length <= CWD_MAX) return path;
+  return `\u2026${path.slice(-(CWD_MAX - 1))}`;
+}
+
 function render() {
   // The pill speaks for the window, not for one session: with several
   // running, the useful thing to know is how many are still going.
@@ -226,7 +238,7 @@ function render() {
   body.classList.remove('state-idle', 'state-busy', 'state-needsInput', 'state-done');
   body.classList.add(`state-${active?.state ?? 'idle'}`);
 
-  barCwd.textContent = active?.cwd ?? '';
+  barCwd.textContent = active?.cwd ? shortenPath(active.cwd) : '';
 
   if (mode === 'bar') {
     barLine.textContent = lastOutputLine();

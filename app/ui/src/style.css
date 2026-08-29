@@ -862,11 +862,7 @@ body.state-needsInput {
    because the end of a path is the part that says which project it is. */
 #bar-cwd {
   flex: none;
-  max-width: 45%;
-  overflow: hidden;
   white-space: nowrap;
-  direction: rtl;
-  text-overflow: ellipsis;
   font: 400 11.5px/1 var(--mono);
   color: var(--ink-3);
 }
