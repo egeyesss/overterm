@@ -25,7 +25,12 @@ pub const EVENT_MODE: &str = "overterm://mode";
 pub const EVENT_ATTENTION: &str = "overterm://attention";
 
 /// Height of the collapsed bar, in logical pixels.
-const BAR_HEIGHT: f64 = 64.0;
+///
+/// Two rows: the status line and somewhere to type. This has a twin in
+/// `tauri.conf.json` as the window's minimum height, and the two have to
+/// move together or the window ends up a different size from the layout
+/// inside it.
+const BAR_HEIGHT: f64 = 68.0;
 /// Height to restore to if the window was never measured while expanded.
 const DEFAULT_PANEL_HEIGHT: f64 = 620.0;
 /// Gap between the two checks that a collapse is safe. Claude repaints its
@@ -465,5 +470,28 @@ pub fn hide_window(app: AppHandle) {
         && let Err(e) = window.hide()
     {
         eprintln!("[choreograph] hide failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_collapsed_height_matches_the_window_minimum() {
+        // The bar's height is decided here and the window's minimum is
+        // decided in tauri.conf.json. If they drift, the window is a
+        // different size from the layout inside it and the bar either
+        // clips or floats in a gap.
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("the config is JSON");
+        let minimum = config["app"]["windows"][0]["minHeight"]
+            .as_f64()
+            .expect("the main window sets a minimum height");
+
+        assert_eq!(
+            minimum, BAR_HEIGHT,
+            "tauri.conf.json says {minimum} and the bar is {BAR_HEIGHT}"
+        );
     }
 }

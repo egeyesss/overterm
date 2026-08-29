@@ -121,6 +121,13 @@
   }
 }
 
+/* No system titlebar, so the window draws its own corner and the hairline
+   that separates it from whatever is behind. */
+body {
+  border-radius: var(--radius-window);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
 html,
 body {
   margin: 0;
@@ -140,14 +147,16 @@ body {
    not mostly chrome. */
 #titlebar {
   flex: none;
-  height: 26px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px 0 12px;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  background: var(--chrome);
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
-  color: var(--ink-3);
+  font: 500 11.5px/1 var(--sans);
+  color: var(--ink-2);
   user-select: none;
 }
 
@@ -199,12 +208,13 @@ body.attention-needs::after {
    terminal rather than on labels. */
 #tabs {
   flex: none;
-  width: 50px;
+  width: 52px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 0;
+  gap: 10px;
+  padding: 12px 0;
+  background: var(--chrome);
   border-right: 1px solid var(--line);
   overflow-y: auto;
 }
@@ -212,18 +222,17 @@ body.attention-needs::after {
 .tab {
   position: relative;
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  border-radius: var(--radius-tile);
+  background: var(--body);
   color: var(--ink-3);
-  font: inherit;
-  font-size: 10px;
+  font: 500 11px/1 var(--mono);
   cursor: pointer;
   /* A name longer than the box is cut off rather than spilling out of
      it. The whole thing is still in the tooltip. */
@@ -280,7 +289,6 @@ body.attention-needs::after {
 }
 
 .tab.active {
-  border-color: var(--busy);
   color: var(--ink);
 }
 
@@ -359,36 +367,44 @@ body.attention-needs::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: rgba(26, 27, 38, 0.85);
-  border: 1px solid var(--line);
-  font: inherit;
-  font-size: 11px;
-  color: var(--ink);
+  padding: 3px 9px 3px 7px;
+  border-radius: 20px;
+  background: var(--pill-bg, var(--line));
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--pill-ink, var(--ink-2));
   white-space: nowrap;
 }
 
 .pill .dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--ink-3);
+  background: var(--pill-dot, var(--ink-3));
   flex: none;
 }
 
 .pill .elapsed {
-  color: var(--ink-3);
+  color: var(--ink-4);
 }
 
-body.state-busy .pill .dot {
-  background: var(--busy);
+/* One state sets all three: the dot, the label ink and the wash behind
+   them. Set on the body so the collapsed pill and the expanded one agree
+   without either knowing about the other. */
+body.state-busy {
+  --pill-dot: var(--busy);
+  --pill-ink: var(--busy-ink);
+  --pill-bg: var(--busy-pill);
 }
-body.state-done .pill .dot {
-  background: var(--done);
+body.state-done {
+  --pill-dot: var(--done);
+  --pill-ink: var(--done-ink);
+  --pill-bg: var(--done-pill);
 }
-body.state-needsInput .pill .dot {
-  background: var(--needs);
+body.state-needsInput {
+  --pill-dot: var(--needs);
+  --pill-ink: var(--needs-ink);
+  --pill-bg: var(--needs-pill);
 }
 
 /* Spinner while the agent works, so the bar shows life even when the
@@ -419,12 +435,12 @@ body.state-busy .pill .dot {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   background: none;
-  border: 1px solid transparent;
-  border-radius: 5px;
+  border: none;
+  border-radius: 7px;
   color: var(--ink-3);
   cursor: pointer;
 }
@@ -448,18 +464,31 @@ body.state-busy .pill .dot {
   flex: 1;
   min-height: 0;
   box-sizing: border-box;
-  padding: 6px 10px;
-  gap: 4px;
   flex-direction: column;
-  justify-content: center;
+  background: var(--chrome);
 }
 
-#bar-top,
-#bar-bottom {
+/* The status line: what it is doing, where, and for how long. */
+#bar-top {
+  flex: none;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
+  padding: 0 12px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Somewhere to type, on the transcript surface so the two rows read as
+   chrome over content the way the expanded window does. */
+#bar-bottom {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  background: var(--body);
 }
 
 /* Last non-empty line of output, so the bar shows progress. */
@@ -473,25 +502,43 @@ body.state-busy .pill .dot {
   color: var(--ink-3);
 }
 
+/* The gutter. Its glyph turns while the agent works and rests when it
+   does not, which is the whole status story at a glance. */
 #bar-bottom .prompt {
-  color: var(--done);
-  font-size: 13px;
   flex: none;
+  width: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--line);
+  font: 400 17px/1 var(--mono);
+  color: var(--ink-4);
+}
+
+body.state-busy #bar-bottom .prompt {
+  color: var(--needs);
+  animation: spin 3.2s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 #bar-input {
   flex: 1;
   min-width: 0;
+  padding: 0 16px;
   background: none;
   border: none;
   outline: none;
   color: var(--ink);
-  font: inherit;
-  font-size: 13px;
+  font: 400 13.5px/1 var(--mono);
 }
 
 #bar-input::placeholder {
-  color: var(--line);
+  color: var(--ink-4);
 }
 
 /* Find bar, floating over the top-right of the terminal. */
@@ -760,4 +807,30 @@ body.mode-bar #bar {
 
 .icon.theme-toggle:hover .theme-glyph {
   color: var(--ink);
+}
+
+/* The active tab is ringed rather than filled, so the mark inside it stays
+   the thing you read. The hue is the tab's own state: the rail exists to
+   show the sessions you are not looking at. */
+.tab.state-busy {
+  --tab-hue: var(--busy);
+}
+.tab.state-done {
+  --tab-hue: var(--done);
+}
+.tab.state-needsInput {
+  --tab-hue: var(--needs);
+}
+
+.tab.active {
+  box-shadow: 0 0 0 1.5px var(--tab-hue, var(--ink-4));
+}
+
+/* Needing an answer is the one state that earns the whole window. The ring
+   is the design's amber, drawn just inside the edge so it reads on any
+   background the overlay happens to be sitting on. */
+body.state-needsInput {
+  box-shadow:
+    inset 0 0 0 1px var(--ring),
+    inset 0 0 0 3px var(--needs-pill);
 }
