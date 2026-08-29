@@ -37,6 +37,8 @@
   --done-pill: oklch(0.62 0.16 145 / 0.12);
 
   /* Handed to xterm, so hex only. */
+  --brand: oklch(0.72 0.16 60);
+
   --busy-hex: #DB4241;
   --needs-hex: #EB881F;
   --done-hex: #31983D;
@@ -79,6 +81,8 @@
   --done: oklch(0.75 0.16 145);
   --done-ink: oklch(0.82 0.13 145);
   --done-pill: oklch(0.75 0.16 145 / 0.16);
+
+  --brand: oklch(0.82 0.15 60);
 
   --busy-hex: #F75D59;
   --needs-hex: #FFAB55;
@@ -994,4 +998,16 @@ body.mode-bar #grips {
   height: 6px;
   border-radius: 1px;
   background: oklch(0.82 0.15 60);
+}
+
+/* The o of oTerm, carrying the same amber as the block cursor in the app
+   icon. It is the one piece of colour in the header, so the wordmark and
+   the icon read as the same object.
+
+   Clicks pass through to the title behind it, which is what carries the
+   drag region: without this, dragging the window by its own name stops
+   working over that one letter. */
+.brand-o {
+  color: var(--brand);
+  pointer-events: none;
 }
