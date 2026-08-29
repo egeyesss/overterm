@@ -4,7 +4,7 @@
 //! the app talks to `PlatformWindow` only, so porting to Windows or Linux
 //! means writing one more implementation and changing nothing else.
 
-use tauri::{App, Runtime, WebviewWindow};
+use tauri::{AppHandle, Runtime, WebviewWindow};
 
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(not(target_os = "macos"), path = "fallback.rs")]
@@ -99,12 +99,13 @@ pub fn process_cwd(pid: i32) -> Option<String> {
     imp::process_cwd(pid)
 }
 
-/// Tell the OS this is an overlay rather than an ordinary app.
+/// Whether the app appears in the Dock and the app switcher.
 ///
-/// Separate from the window calls because it is a property of the
-/// application, and it has to happen before any window is shown.
-pub fn make_accessory<R: Runtime>(app: &mut App<R>) {
-    imp::make_accessory(app);
+/// A property of the application rather than of any window, and on macOS
+/// it decides a second thing too: an app kept out of the Dock also does
+/// not become frontmost when its window is clicked.
+pub fn set_dock_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
+    imp::set_dock_visible(app, visible);
 }
 
 /// Apply the full overlay treatment. Call once during setup, on the main

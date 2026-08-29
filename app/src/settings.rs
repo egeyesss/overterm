@@ -62,6 +62,15 @@ pub struct Settings {
     /// Which theme to draw, or to follow the machine's own setting.
     pub theme: Theme,
 
+    /// Whether the app appears in the Dock and the app switcher.
+    ///
+    /// On by default, because a terminal somebody uses all day should be
+    /// somewhere they can click it. Turning it off makes this an
+    /// accessory app instead, which is what a hotkey-summoned overlay
+    /// wants: no Dock icon, and clicking the window no longer makes it
+    /// the frontmost application, so the menu bar you were using stays.
+    pub show_in_dock: bool,
+
     // Tables have to come after the plain values above: TOML puts every
     // key before the first section header, so a scalar declared after a
     // table cannot be written back out.
@@ -278,6 +287,7 @@ impl Default for Settings {
             opacity: MAX_OPACITY,
             hotkey: DEFAULT_HOTKEY.into(),
             theme: Theme::default(),
+            show_in_dock: true,
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
@@ -766,6 +776,9 @@ pub fn save_settings<R: Runtime>(
     if next.opacity != stored.opacity {
         window.set_opacity(next.alpha())?;
     }
+    if next.show_in_dock != stored.show_in_dock {
+        crate::platform::set_dock_visible(window.app_handle(), next.show_in_dock);
+    }
 
     let path = path().ok_or("no home directory to store settings in")?;
     save_to(&path, &next)?;
@@ -810,6 +823,7 @@ mod tests {
             hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
             theme: Theme::Light,
+            show_in_dock: true,
             window: WindowSettings {
                 collapse_on_submit: false,
                 collapse_delay_ms: 900,
@@ -1179,6 +1193,28 @@ mod tests {
         let settings = load_from(&path);
 
         assert_eq!(settings.terminal.font_family, "Fira Code");
+    }
+
+    #[test]
+    fn a_new_install_appears_in_the_dock() {
+        // A terminal somebody uses all day should be somewhere they can
+        // click it. Overlay behaviour is the option, not the default.
+        assert!(Settings::default().show_in_dock);
+    }
+
+    #[test]
+    fn the_dock_choice_survives_a_round_trip() {
+        // It sits among the scalars, above the tables. A field written
+        // after a table cannot be serialised at all, so this also catches
+        // it being moved into the wrong half of the struct.
+        let path = scratch("dock-round-trip");
+        let settings = Settings {
+            show_in_dock: false,
+            ..Default::default()
+        };
+        save_to(&path, &settings).unwrap();
+
+        assert!(!load_from(&path).show_in_dock);
     }
 
     #[test]

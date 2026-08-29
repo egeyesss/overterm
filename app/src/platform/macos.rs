@@ -22,7 +22,7 @@
 //! caller.
 
 use objc2_app_kit::{NSApplication, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
-use tauri::{ActivationPolicy, App, Runtime, WebviewWindow};
+use tauri::{ActivationPolicy, AppHandle, Runtime, WebviewWindow};
 
 /// Borrow the window's AppKit object.
 ///
@@ -301,18 +301,28 @@ pub fn report_state<R: Runtime>(
     })
 }
 
-/// Become an accessory app: no Dock icon, no menu bar of its own.
+/// Whether the app appears in the Dock and the app switcher.
 ///
-/// Which is what a hotkey-summoned window that lives on top of other
-/// things wants to be, and how every comparable overlay ships. It also
-/// settles the leftover where clicking the terminal made this the
-/// frontmost app.
+/// The two policies are a real trade rather than a preference. As a
+/// regular app it has a Dock icon, a Cmd+Tab entry and somewhere to drop
+/// files, which is what a terminal somebody uses all day should be. As an
+/// accessory it has none of those, and in exchange clicking its window
+/// does not make it the frontmost application, so the menu bar of
+/// whatever you were in stays where it was. That is what a
+/// hotkey-summoned overlay wants and how comparable tools ship.
 ///
-/// It is not what makes the window appear over another application's
-/// full-screen space; the collection behaviour above does that. This was
-/// added while looking for the cause and kept on its own merits.
-pub fn make_accessory<R: Runtime>(app: &mut App<R>) {
-    app.set_activation_policy(ActivationPolicy::Accessory);
+/// Neither is what makes the window float over another application's
+/// full-screen space; the collection behaviour above does that. So this
+/// can be changed freely without disturbing the overlay behaviour.
+pub fn set_dock_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
+    let policy = if visible {
+        ActivationPolicy::Regular
+    } else {
+        ActivationPolicy::Accessory
+    };
+    if let Err(e) = app.set_activation_policy(policy) {
+        eprintln!("[platform] could not set the activation policy: {e}");
+    }
 }
 
 /// Whether the window is on the Space the user is looking at.

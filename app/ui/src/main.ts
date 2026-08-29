@@ -56,6 +56,7 @@ type Settings = {
   opacity: number;
   hotkey: string;
   theme: Theme;
+  show_in_dock: boolean;
   window: {
     collapse_on_submit: boolean;
     collapse_delay_ms: number;
@@ -578,6 +579,7 @@ for (const button of themeButtons) {
   });
 }
 
+const showInDock = field<HTMLInputElement>('show-in-dock');
 const panelWidth = field<HTMLInputElement>('panel-width');
 const panelHeight = field<HTMLInputElement>('panel-height');
 
@@ -637,6 +639,7 @@ function showSettings(current: Settings) {
   fontFamily.value = current.terminal.font_family;
   fontSize.value = String(current.terminal.font_size);
   scrollback.value = String(current.terminal.scrollback);
+  showInDock.checked = current.show_in_dock;
   panelWidth.value = String(current.window.panel_width);
   panelHeight.value = String(current.window.panel_height);
   opacity.value = String(current.opacity);
@@ -670,6 +673,7 @@ function saveSettings() {
   const next: Settings = {
     ...settings,
     opacity: Number(opacity.value),
+    show_in_dock: showInDock.checked,
     window: {
       // Spread first: the size lives in here too and is applied through
       // its own command, so rebuilding this object from the checkboxes
@@ -710,7 +714,7 @@ opacity.addEventListener('input', () => {
 });
 opacity.addEventListener('change', saveSettings);
 
-for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound]) {
+for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound, showInDock]) {
   input.addEventListener('change', saveSettings);
 }
 for (const input of [collapseDelay, revealStalled, fontSize, scrollback, fontFamily]) {

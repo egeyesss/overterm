@@ -65,7 +65,7 @@ fn main() {
         .setup(move |app| {
             // Before the window is shown, since it decides whether this
             // app owns a Space of its own.
-            platform::make_accessory(app);
+            platform::set_dock_visible(app.handle(), settings::load().show_in_dock);
             let window = app
                 .get_webview_window(MAIN_WINDOW)
                 .expect("main window is defined in tauri.conf.json");
