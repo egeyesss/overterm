@@ -6,7 +6,7 @@ Run Claude Code, Codex, Gemini CLI or any other command line tool in a
 small window that floats above everything else. While the agent works,
 oTerm shrinks to a status bar and stays out of your way. The moment it
 finishes or asks a question, the terminal comes back on its own, without
-stealing the keystroke you were part way through typing somewhere else.
+you needing to keep alt+tab-ing to check if the task is finished.
 
 macOS 11 or newer. Free and open source, MIT licensed.
 
