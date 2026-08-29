@@ -31,9 +31,23 @@ pub const EVENT_ATTENTION: &str = "overterm://attention";
 /// move together or the window ends up a different size from the layout
 /// inside it.
 const BAR_HEIGHT: f64 = 68.0;
-/// Width of the collapsed bar. Narrower than the panel on purpose: out of
-/// the way it should take no more room than it needs.
-const BAR_WIDTH: f64 = 520.0;
+/// How much of the expanded window's width the collapsed bar keeps.
+///
+/// It follows the panel so that picking a smaller terminal gives a smaller
+/// bar, and it is a fraction rather than the same width because out of the
+/// way it should take less room than it does in use.
+const BAR_WIDTH_FRACTION: f64 = 0.72;
+/// Narrowest the bar goes. Below this the path and the timer start
+/// fighting each other for the row.
+const MIN_BAR_WIDTH: f64 = 380.0;
+/// Widest the bar goes, however large the terminal is set. A bar as wide
+/// as a half-screen window is not out of the way any more.
+const MAX_BAR_WIDTH: f64 = 620.0;
+
+/// Width of the collapsed bar for a given expanded width.
+fn bar_width(panel_width: f64) -> f64 {
+    (panel_width * BAR_WIDTH_FRACTION).clamp(MIN_BAR_WIDTH, MAX_BAR_WIDTH)
+}
 
 /// Gap between the two checks that a collapse is safe. Claude repaints its
 /// status area every several seconds while it sits idle, which reads as
@@ -347,16 +361,19 @@ impl Choreographer {
 
     /// Set the expanded size directly, from the settings sheet.
     pub fn set_panel_size<R: Runtime>(&self, app: &AppHandle<R>, width: f64, height: f64) {
-        {
+        let mode = {
             let mut state = self.0.state.lock().unwrap();
             state.panel_width = width;
             state.panel_height = height;
-            if state.mode != WindowMode::Panel {
-                return;
-            }
-        }
+            state.mode
+        };
         if let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) {
-            resize_keeping_top(&window, width, height);
+            // Collapsed, the bar is what needs re-fitting: the panel size
+            // is stored and takes effect the next time it expands.
+            match mode {
+                WindowMode::Panel => resize_keeping_top(&window, width, height),
+                WindowMode::Bar => resize_keeping_top(&window, bar_width(width), BAR_HEIGHT),
+            }
         }
     }
 
@@ -377,8 +394,12 @@ impl Choreographer {
             }
             state.mode = WindowMode::Bar;
         }
+        let width = {
+            let state = self.0.state.lock().unwrap();
+            bar_width(state.panel_width)
+        };
         let _ = window.set_resizable(false);
-        resize_keeping_top(&window, BAR_WIDTH, BAR_HEIGHT);
+        resize_keeping_top(&window, width, BAR_HEIGHT);
         let _ = app.emit(
             EVENT_MODE,
             ModePayload {
@@ -514,6 +535,31 @@ pub fn hide_window(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bar_follows_the_terminal_it_belongs_to() {
+        // Picking a smaller terminal should give a smaller bar, so the two
+        // read as the same window rather than as unrelated sizes.
+        let small = bar_width(520.0);
+        let medium = bar_width(660.0);
+        assert!(
+            small < medium,
+            "a smaller terminal has to give a smaller bar: {small} vs {medium}"
+        );
+        assert!(
+            medium < 660.0,
+            "out of the way it should take less room than in use"
+        );
+    }
+
+    #[test]
+    fn the_bar_stays_between_its_two_ends() {
+        // A tiny terminal must not give a bar too narrow for the path and
+        // the timer, and a half-screen one must not give a bar so wide it
+        // stops being out of the way.
+        assert_eq!(bar_width(100.0), MIN_BAR_WIDTH);
+        assert_eq!(bar_width(4000.0), MAX_BAR_WIDTH);
+    }
 
     #[test]
     fn the_collapsed_height_matches_the_window_minimum() {

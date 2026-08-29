@@ -535,7 +535,7 @@ body.state-busy .pill .dot {
 #bar-input {
   flex: 1;
   min-width: 0;
-  padding: 0 16px;
+  padding: 0 14px;
   background: none;
   border: none;
   outline: none;
@@ -943,4 +943,55 @@ body.mode-bar #grips {
   bottom: 0;
   left: 0;
   cursor: nesw-resize;
+}
+
+/* The app's own mark, sitting where the agent glyph used to. It is the
+   icon in miniature: a dark window with a white chrome bar, the o, and
+   the block cursor.
+
+   Its colours are fixed rather than themed. It is the same object as the
+   icon in the Dock, and that one does not change when the desktop does. */
+.mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: 14px;
+  border-radius: 5px;
+  background: #101012;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.mark-bar {
+  flex: none;
+  height: 4px;
+  background: #ffffff;
+}
+
+.mark-face {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.mark-o {
+  font: 500 9px/1 var(--mono);
+  color: #ffffff;
+  letter-spacing: -0.03em;
+  /* The ink of a lowercase o sits below the middle of its line box, so
+     centring the box leaves the letter low and out of line with the
+     caret. Same correction the app icon needed, scaled down. */
+  transform: translateY(-0.5px);
+}
+
+.mark-caret {
+  flex: none;
+  width: 2px;
+  height: 6px;
+  border-radius: 1px;
+  background: oklch(0.82 0.15 60);
 }
