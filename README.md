@@ -3,14 +3,13 @@
 **A terminal that knows when your AI agent needs you.**
 
 Run Claude Code, Codex, Gemini CLI or any other command line tool in a
-small window that floats above everything else. While the agent works,
-oTerm shrinks to a status bar and stays out of your way. The moment it
-finishes or asks a question, the terminal comes back on its own, without
+small terminal that floats above everything else. While the agent works,
+oTerm shrinks to a status bar and stays out of your way so that you can 
+watch your favourite show while your agent works. The moment it
+finishes or asks a question, the terminal shows up on its own, without
 you needing to keep alt+tab-ing to check if the task is finished.
 
-macOS 11 or newer. Free and open source, MIT licensed.
-
-> The project is called OverTerm and the app is called oTerm. Same thing.
+> macOS 11 or newer. Free and open source, MIT licensed.
 
 ## Install
 
@@ -18,15 +17,14 @@ macOS 11 or newer. Free and open source, MIT licensed.
 curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh | sh
 ```
 
-That is the whole install. It puts `oTerm.app` in your Applications
-folder, and you open it from Spotlight or Finder like anything else.
-After that it lives in the menu bar: click the icon to summon or hide it,
-or press `Cmd+Shift+O` from any app.
+That's all. It puts `oTerm.app` in your Applications folder, 
+and you can open it from Spotlight or Finder like any other app.
+After that, you can open it by the small terminal icon in the menu bar. 
+You can show/hide the terminal with `Cmd+Shift+O` after that.
 
-There is no Dock icon, and that is deliberate rather than missing. macOS
-gives an app with a Dock icon a desktop of its own and switches you to
-it, which would stop the window appearing over a full-screen video. The
-menu bar icon is what oTerm has instead.
+There is no Dock icon on purpose. macOS gives an app with a Dock icon 
+a desktop of its own and switches you to it, which
+would stop the window appearing over a full-screen video.
 
 Piping a script into a shell is a lot to ask of anybody, so read it first
 if you would rather:
@@ -37,16 +35,17 @@ less install.sh
 sh install.sh
 ```
 
-To remove it again, along with the Claude Code entries described below:
+## Uninstall
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/uninstall.sh | sh
 ```
 
-### Why a script rather than a download
+### Why am I asking you to run a script?
 
-The app is not signed with an Apple Developer certificate, which costs
-money every year. macOS refuses to open an unsigned app that carries the
+The app is not signed with an Apple Developer certificate, which costs 99/yr, and
+I am broke so I don't want to spend money on that for a side project.
+macOS refuses to open an unsigned app that carries the
 `com.apple.quarantine` attribute, and tells you it cannot be checked for
 malware.
 
@@ -54,11 +53,9 @@ That attribute is set by whatever downloaded the file. Browsers set it and
 Homebrew sets it. `curl` does not, so an app it downloads is never
 quarantined and opens normally.
 
-Being straight about what that means: this gets around the check rather
-than passing it. The app is still unsigned, so nothing proves the binary
-you run was built from the source in this repo. What you do get is that
-every release is built by a GitHub Actions workflow that lives here, and
-its log is public. The script also checks the download against the
+This gets around the check rather than passing it. 
+What you do get is that every release is built by a GitHub Actions workflow that lives here, 
+and the logs are all public. The script also checks the download against the
 checksum published beside it, which catches a file that arrived damaged.
 
 ### Homebrew
@@ -71,16 +68,15 @@ brew install --cask egeyesss/overterm/overterm
 xattr -dr com.apple.quarantine /Applications/oTerm.app
 ```
 
-On macOS 15 and later, right-clicking an app to open it stopped working as
-a way around this, so the `xattr` line is what you need.
+> On macOS 15 and later, right-clicking an app to open it stopped working as a way around this, so the `xattr` line is what you need.
 
 ## What it does
 
 **It works out what your agent is doing.** Idle, working, finished, or
 waiting on an answer, with nothing to install and no cooperation from the
 tool. It reads the terminal the way you would, so it works with a CLI it
-has never heard of. With Claude Code it does better than guess, which is
-the section below.
+has never heard of. **It is designed mainly for Claude Code usage** so it does 
+better than guess for CC, which is the section below.
 
 **It gets out of the way, then comes back.** Hand a session a job and the
 window shrinks to a status bar showing what it is doing, where, and for
@@ -94,10 +90,10 @@ including over another app's full-screen window.
 **Several agents at once.** Each session gets a tab, labelled with
 whichever tool is running in it and carrying its own status dot, so you
 can see which one wants you without switching. The window only tucks
-itself away once every session is busy.
+itself away once **every** **session** is busy.
 
 **It is a real terminal.** A real PTY, so full colour interactive
-interfaces work untouched. Find, clickable links, GPU rendering, correct
+interfaces work untouched. Find, clickable links, **GPU** **rendering**, correct
 emoji widths, and Shift+Enter for a multi-line prompt.
 
 **It is yours to arrange.** Light and dark or follow the system, drag any
@@ -159,7 +155,7 @@ cargo test                   # the tests
 ```
 
 Tests spawn real shells in real PTYs and replay recorded terminal
-transcripts, so they are slower than mocks and a great deal more honest.
+transcripts, so they are slower than mocks and way more honest.
 
 ```
 crates/core   PTY sessions, agent state detection, window rules
