@@ -64,11 +64,12 @@ pub struct Settings {
 
     /// Whether the app appears in the Dock and the app switcher.
     ///
-    /// On by default, because a terminal somebody uses all day should be
-    /// somewhere they can click it. Turning it off makes this an
-    /// accessory app instead, which is what a hotkey-summoned overlay
-    /// wants: no Dock icon, and clicking the window no longer makes it
-    /// the frontmost application, so the menu bar you were using stays.
+    /// Off by default, and it costs more than a Dock icon either way.
+    /// macOS gives an ordinary application a Space of its own and takes
+    /// the user to it, so turning this on stops the window being drawn
+    /// over another application's full-screen space, which is the thing
+    /// this app is for. The menu bar item is what it has instead of a
+    /// Dock icon. See `platform::Presence`.
     pub show_in_dock: bool,
 
     // Tables have to come after the plain values above: TOML puts every
@@ -287,7 +288,7 @@ impl Default for Settings {
             opacity: MAX_OPACITY,
             hotkey: DEFAULT_HOTKEY.into(),
             theme: Theme::default(),
-            show_in_dock: true,
+            show_in_dock: false,
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
@@ -777,7 +778,10 @@ pub fn save_settings<R: Runtime>(
         window.set_opacity(next.alpha())?;
     }
     if next.show_in_dock != stored.show_in_dock {
-        crate::platform::set_dock_visible(window.app_handle(), next.show_in_dock);
+        crate::platform::set_presence(
+            window.app_handle(),
+            crate::platform::Presence::from_dock_preference(next.show_in_dock),
+        );
     }
 
     let path = path().ok_or("no home directory to store settings in")?;
@@ -1196,10 +1200,16 @@ mod tests {
     }
 
     #[test]
-    fn a_new_install_appears_in_the_dock() {
-        // A terminal somebody uses all day should be somewhere they can
-        // click it. Overlay behaviour is the option, not the default.
-        assert!(Settings::default().show_in_dock);
+    fn a_new_install_is_an_overlay_rather_than_a_dock_app() {
+        // The Dock icon and sitting over somebody's full-screen video are
+        // the same choice on macOS, and the overlay is what this app is
+        // for. A release shipped with this the other way round and the
+        // window stopped appearing over full-screen apps entirely.
+        assert!(!Settings::default().show_in_dock);
+        assert_eq!(
+            crate::platform::Presence::from_dock_preference(Settings::default().show_in_dock),
+            crate::platform::Presence::Overlay,
+        );
     }
 
     #[test]
@@ -1207,14 +1217,18 @@ mod tests {
         // It sits among the scalars, above the tables. A field written
         // after a table cannot be serialised at all, so this also catches
         // it being moved into the wrong half of the struct.
+        //
+        // Stored as the non-default on purpose: a missing key reads back
+        // as the default, so writing that value would pass this test
+        // without the field ever reaching the file.
         let path = scratch("dock-round-trip");
         let settings = Settings {
-            show_in_dock: false,
+            show_in_dock: true,
             ..Default::default()
         };
         save_to(&path, &settings).unwrap();
 
-        assert!(!load_from(&path).show_in_dock);
+        assert!(load_from(&path).show_in_dock);
     }
 
     #[test]

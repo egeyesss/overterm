@@ -64,8 +64,12 @@ fn main() {
         )
         .setup(move |app| {
             // Before the window is shown, since it decides whether this
-            // app owns a Space of its own.
-            platform::set_dock_visible(app.handle(), settings::load().show_in_dock);
+            // app owns a Space of its own, and so whether the overlay
+            // set up below can be drawn over a full-screen app at all.
+            platform::set_presence(
+                app.handle(),
+                platform::Presence::from_dock_preference(settings::load().show_in_dock),
+            );
             let window = app
                 .get_webview_window(MAIN_WINDOW)
                 .expect("main window is defined in tauri.conf.json");
@@ -154,10 +158,11 @@ fn panel_resized(app: &tauri::AppHandle, size: tauri::PhysicalSize<u32>) {
 
 /// Quit, from the close button.
 ///
-/// A real exit rather than closing the window: this app has no Dock icon
-/// to bring it back from, so a hidden window with the process still
-/// running would look exactly like having quit while still holding the
-/// summon shortcut.
+/// A real exit rather than closing the window. By default there is no
+/// Dock icon to bring it back from, so a hidden window with the process
+/// still running would look exactly like having quit while still holding
+/// the summon shortcut. The menu bar item is the way back to a window
+/// that is merely hidden.
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
