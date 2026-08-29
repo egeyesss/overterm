@@ -252,17 +252,18 @@ pub fn join_all_spaces<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), Stri
             NSWindowCollectionBehavior::CanJoinAllSpaces
                 | NSWindowCollectionBehavior::Stationary
                 | NSWindowCollectionBehavior::FullScreenAuxiliary
-                // These two are the ones that matter for sitting over
-                // somebody else's full-screen app, and they are easy to
-                // miss because every older answer names the three above.
-                // CanJoinAllSpaces puts the window on every ordinary
-                // Space and stops at a full-screen one, which measured as
-                // isOnActiveSpace being false the whole time a video was
-                // playing. Auxiliary plus CanJoinAllApplications is what
-                // lets a window join a Space another application owns.
-                // Both arrived in macOS 13; on anything older they are
-                // inert bits and the window behaves as it did before.
-                | NSWindowCollectionBehavior::Auxiliary
+                // Asks to be allowed onto a Space another application
+                // owns, which is the one flag here that is about
+                // full-screen at all: CanJoinAllSpaces covers every
+                // ordinary Space and stops at a full-screen one. It
+                // arrived in macOS 13, so on anything older it is an
+                // inert bit and the window behaves as it did before.
+                //
+                // Auxiliary used to be set alongside it. Apple documents
+                // Primary, Auxiliary and CanJoinAllApplications as one
+                // group with at most one member, so setting two of them
+                // asked for something undefined. Overlay is what this
+                // window is, so it is the one that stays.
                 | NSWindowCollectionBehavior::CanJoinAllApplications,
         );
     })
