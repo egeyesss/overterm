@@ -63,4 +63,4 @@ body:
     attributes:
       label: Version
       description: >
-        defaults read /Applications/OverTerm.app/Contents/Info.plist CFBundleShortVersionString
+        defaults read /Applications/oTerm.app/Contents/Info.plist CFBundleShortVersionString

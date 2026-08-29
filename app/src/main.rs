@@ -40,7 +40,12 @@ fn main() {
 
     tauri::Builder::default()
         .manage(pty::Sessions::default())
-        .manage(Choreographer::new(settings::load().choreo()))
+        .manage({
+            let stored = settings::load();
+            let (width, height) =
+                settings::sane_panel_size(stored.window.panel_width, stored.window.panel_height);
+            Choreographer::new(stored.choreo(), width as f64, height as f64)
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -60,7 +65,7 @@ fn main() {
         .setup(move |app| {
             // Before the window is shown, since it decides whether this
             // app owns a Space of its own.
-            platform::make_accessory(app);
+            platform::set_dock_visible(app.handle(), settings::load().show_in_dock);
             let window = app
                 .get_webview_window(MAIN_WINDOW)
                 .expect("main window is defined in tauri.conf.json");
@@ -84,6 +89,17 @@ fn main() {
             {
                 eprintln!("[hotkey] could not register the toggle shortcut: {e}");
             }
+            // Somebody dragging a window edge is choosing a size, so it
+            // is kept. macOS sends a great many of these during one drag,
+            // so the write waits until the dragging stops.
+            {
+                let handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Resized(size) = event {
+                        panel_resized(&handle, *size);
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -101,10 +117,50 @@ fn main() {
             settings::set_hotkey,
             settings::settings,
             settings::save_settings,
+            settings::set_panel_size,
+            settings::size_preset,
             app_version,
+            quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OverTerm");
+}
+
+/// Note a new window size and, once the dragging stops, store it.
+///
+/// A single drag produces a stream of these, so each one bumps a counter
+/// and only the last one still holding it writes anything.
+fn panel_resized(app: &tauri::AppHandle, size: tauri::PhysicalSize<u32>) {
+    let choreo = app.state::<Choreographer>();
+    let scale = app
+        .get_webview_window(MAIN_WINDOW)
+        .and_then(|w| w.scale_factor().ok())
+        .unwrap_or(1.0);
+    let width = size.width as f64 / scale;
+    let height = size.height as f64 / scale;
+    if !choreo.remember_panel_size(width, height) {
+        return;
+    }
+
+    static PENDING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mine = PENDING.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        if PENDING.load(std::sync::atomic::Ordering::SeqCst) == mine {
+            settings::save_panel_size(width.round() as u32, height.round() as u32);
+        }
+    });
+}
+
+/// Quit, from the close button.
+///
+/// A real exit rather than closing the window: this app has no Dock icon
+/// to bring it back from, so a hidden window with the process still
+/// running would look exactly like having quit while still holding the
+/// summon shortcut.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 /// The version this build reports.

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Installs OverTerm into /Applications.
+# Installs oTerm into /Applications.
 #
 #   curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh | sh
 #
@@ -11,8 +11,8 @@
 set -eu
 
 REPO="egeyesss/overterm"
-APP_NAME="OverTerm.app"
-TARBALL="OverTerm_universal.tar.gz"
+APP_NAME="oTerm.app"
+TARBALL="oTerm_universal.tar.gz"
 APPS="${OVERTERM_APPDIR:-/Applications}"
 DEST="$APPS/$APP_NAME"
 VERSION="${OVERTERM_VERSION:-latest}"
@@ -20,7 +20,7 @@ VERSION="${OVERTERM_VERSION:-latest}"
 say() { printf '%s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-[ "$(uname -s)" = "Darwin" ] || fail "OverTerm only runs on macOS so far."
+[ "$(uname -s)" = "Darwin" ] || fail "oTerm only runs on macOS so far."
 command -v curl >/dev/null 2>&1 || fail "curl is needed and is not installed."
 command -v shasum >/dev/null 2>&1 || fail "shasum is needed and is not installed."
 
@@ -46,7 +46,7 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-say "Downloading OverTerm ($VERSION)"
+say "Downloading oTerm ($VERSION)"
 curl -fsSL -o "$work/$TARBALL" "$base/$TARBALL" ||
   fail "could not download $base/$TARBALL"
 curl -fsSL -o "$work/$TARBALL.sha256" "$base/$TARBALL.sha256" ||
@@ -65,13 +65,17 @@ tar -xzf "$work/$TARBALL" -C "$work"
 
 # Swapping the bundle underneath a running copy leaves it in a strange
 # state, so ask it to go first. It not running is the normal case.
-osascript -e 'quit app "OverTerm"' >/dev/null 2>&1 || true
+osascript -e 'quit app "oTerm"' >/dev/null 2>&1 || true
 
 # Unpacking over the top of an old copy keeps whatever the old one had and
 # the new one does not, so replace it outright. Everything above has
 # already succeeded by this point, so the window where there is no app
 # installed is one rename wide.
 rm -rf "$DEST"
+# The app was called OverTerm.app before it was called oTerm.app, so an
+# upgrade would otherwise leave two copies in /Applications, one of them
+# dead. Only removed once the new one is on disk and checked.
+rm -rf "$APPS/OverTerm.app"
 mv "$work/$APP_NAME" "$DEST"
 
 say ""

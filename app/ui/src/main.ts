@@ -1,4 +1,17 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+
+/// The eight directions a window edge can be dragged in, as the window
+/// API names them. Mirrored here because the type is not exported.
+type ResizeDirection =
+  | 'North'
+  | 'South'
+  | 'East'
+  | 'West'
+  | 'NorthEast'
+  | 'NorthWest'
+  | 'SouthEast'
+  | 'SouthWest';
 import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -28,10 +41,11 @@ type PtyEvent =
   | { event: 'exited'; data: { code: number | null } }
   | {
       event: 'agentChanged';
-      data: { agent: { id: string; label: string; icon: string | null; color: string | null } };
+      data: { agent: { id: string; label: string; icon: string | null; color: string | null; cwd: string | null } };
     };
 
 type Cues = { glow: boolean; sound: boolean };
+type Theme = 'light' | 'dark' | 'system';
 
 /// Mirrors the Rust struct, so the keys are snake_case the whole way
 /// through: what the interface shows and what somebody reads in
@@ -41,11 +55,15 @@ type Settings = {
   claude_hooks_notice_seen: boolean;
   opacity: number;
   hotkey: string;
+  theme: Theme;
+  show_in_dock: boolean;
   window: {
     collapse_on_submit: boolean;
     collapse_delay_ms: number;
     expand_when_wanted: boolean;
     reveal_when_stalled_ms: number;
+    panel_width: number;
+    panel_height: number;
   };
   cues: Cues;
   terminal: {
@@ -76,6 +94,8 @@ type Session = {
   /// How long the previous turn took, so the bar can say what the last
   /// one cost as well as what this one is costing.
   lastTurnMs: number | null;
+  /// Where this session currently is, or null when it could not be read.
+  cwd: string | null;
   /// Best-effort mirror of what the user has typed since the last submit.
   ///
   /// The real buffer belongs to whatever is running in the PTY and cannot
@@ -94,11 +114,27 @@ const terminalsEl = document.getElementById('terminals') as HTMLDivElement;
 const tabsEl = document.getElementById('tabs') as HTMLElement;
 const tabAdd = document.getElementById('tab-add') as HTMLButtonElement;
 
+/// Read one palette value out of the stylesheet.
+///
+/// The terminal is drawn by xterm and the chrome around it by CSS, and
+/// they have to agree. Keeping the colours in both places means the first
+/// person to change one of them silently splits the window in half, so the
+/// stylesheet is the only copy and this reads it back.
+///
+/// An empty answer means the token is missing or the stylesheet has not
+/// arrived. Say so rather than substituting a colour, because a second
+/// colour written here is the thing being removed.
+function token(name: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (!value) console.error(`[theme] ${name} is not defined in the stylesheet`);
+  return value;
+}
+
 function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: settings?.terminal.font_size ?? DEFAULT_FONT_SIZE,
-    fontFamily: settings?.terminal.font_family ?? 'Menlo, Monaco, "SF Mono", monospace',
+    fontFamily: settings?.terminal.font_family ?? "'IBM Plex Mono', Menlo, Monaco, monospace",
     scrollback: settings?.terminal.scrollback ?? 10_000,
     // Required by the Unicode 11 addon below, which registers a character
     // width provider through an API xterm still calls proposed. Without it
@@ -109,9 +145,9 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
     // working at all, and Claude Code's other Option shortcuts.
     macOptionIsMeta: true,
     theme: {
-      background: '#1a1b26',
-      foreground: '#c0caf5',
-      cursor: '#c0caf5',
+      background: token('--body'),
+      foreground: token('--ink'),
+      cursor: token('--ink'),
     },
   });
 
@@ -157,9 +193,10 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
 }
 
 const body = document.body;
-const barLine = document.getElementById('bar-line')!;
 const barInput = document.getElementById('bar-input') as HTMLInputElement;
 const pills = document.querySelectorAll<HTMLElement>('.pill');
+const barCwd = document.getElementById('bar-cwd')!;
+const elapsedFields = document.querySelectorAll<HTMLElement>('.elapsed');
 
 let mode: WindowMode = 'panel';
 
@@ -188,6 +225,7 @@ function elapsed(ms: number): string {
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
+
 function render() {
   // The pill speaks for the window, not for one session: with several
   // running, the useful thing to know is how many are still going.
@@ -197,14 +235,14 @@ function render() {
 
   for (const pill of pills) {
     pill.querySelector('.label')!.textContent = label;
-    pill.querySelector('.elapsed')!.textContent = active ? timings(active) : '';
+  }
+  for (const field of elapsedFields) {
+    field.textContent = active ? timings(active) : '';
   }
   body.classList.remove('state-idle', 'state-busy', 'state-needsInput', 'state-done');
   body.classList.add(`state-${active?.state ?? 'idle'}`);
 
-  if (mode === 'bar') {
-    barLine.textContent = lastOutputLine();
-  }
+  barCwd.textContent = active?.cwd ?? '';
 }
 setInterval(render, 1000);
 
@@ -213,18 +251,6 @@ function timings(session: Session): string {
   return session.lastTurnMs === null ? now : `${now} / last ${elapsed(session.lastTurnMs)}`;
 }
 
-/// The bottom-most line with anything on it, read off what xterm actually
-/// rendered so escape sequences are already resolved.
-function lastOutputLine(): string {
-  if (!active) return '';
-  const buffer = active.term.buffer.active;
-  const bottom = buffer.baseY + buffer.cursorY;
-  for (let row = bottom; row >= 0 && row > bottom - active.term.rows; row--) {
-    const text = buffer.getLine(row)?.translateToString(true).trim();
-    if (text) return text;
-  }
-  return '';
-}
 
 // --- window mode -----------------------------------------------------
 
@@ -265,6 +291,16 @@ for (const button of document.querySelectorAll('.icon.expand')) {
 for (const button of document.querySelectorAll('.icon.collapse')) {
   button.addEventListener('click', () => requestMode('bar'));
 }
+// Ends the process rather than hiding the window. With no Dock icon
+// there would be nothing to bring a hidden one back from, so a running
+// process behind an invisible window would look like a failed quit while
+// still holding the summon shortcut.
+for (const button of document.querySelectorAll('.icon.close')) {
+  button.addEventListener('click', () => {
+    invoke('quit_app').catch((err) => console.error('[quit] refused:', err));
+  });
+}
+
 for (const button of document.querySelectorAll('.icon.hide')) {
   button.addEventListener('click', () => invoke('hide_window').catch(() => {}));
 }
@@ -356,15 +392,23 @@ const findCount = document.getElementById('find-count')!;
 
 // Matches have to be painted by the addon: the terminal is a canvas, so
 // there is no text node to highlight. Colours come from the same palette
-// as the rest of the chrome.
-const findDecorations = {
-  matchBackground: '#3d59a1',
-  matchBorder: '#3d59a1',
-  matchOverviewRuler: '#3d59a1',
-  activeMatchBackground: '#e0af68',
-  activeMatchBorder: '#e0af68',
-  activeMatchColorOverviewRuler: '#e0af68',
-};
+// as the rest of the chrome, which means reading them rather than
+// repeating them.
+//
+// Built on demand rather than once at module scope, because reading a
+// custom property before the stylesheet is applied returns nothing.
+function findDecorations() {
+  const match = token('--match');
+  const active = token('--needs-hex');
+  return {
+    matchBackground: match,
+    matchBorder: match,
+    matchOverviewRuler: match,
+    activeMatchBackground: active,
+    activeMatchBorder: active,
+    activeMatchColorOverviewRuler: active,
+  };
+}
 
 function runFind(direction: 'next' | 'previous') {
   const search = active?.search;
@@ -376,7 +420,7 @@ function runFind(direction: 'next' | 'previous') {
     findBox.classList.remove('no-matches');
     return;
   }
-  const options = { decorations: findDecorations };
+  const options = { decorations: findDecorations() };
   if (direction === 'next') search.findNext(query, options);
   else search.findPrevious(query, options);
 }
@@ -412,6 +456,25 @@ findBox.querySelector('.find-next')!.addEventListener('click', () => runFind('ne
 findBox.querySelector('.find-prev')!.addEventListener('click', () => runFind('previous'));
 findBox.querySelector('.find-close')!.addEventListener('click', closeFind);
 
+// A window with no system frame gets no resize border from the window
+// manager, so each edge hands the drag over itself. The direction is on
+// the element rather than worked out from the pointer, which keeps the
+// corners honest.
+for (const grip of document.querySelectorAll<HTMLElement>('.grip')) {
+  grip.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const direction = grip.dataset.dir;
+    if (!direction) return;
+    // Refused rather than crashing if the permission is ever missing, and
+    // said out loud: a resize that silently does nothing is the kind of
+    // thing that survives a whole release.
+    getCurrentWindow()
+      .startResizeDragging(direction as ResizeDirection)
+      .catch((err: unknown) => console.error('[resize] could not start:', err));
+  });
+}
+
 // --- settings --------------------------------------------------------
 
 const settingsSheet = document.getElementById('settings')!;
@@ -422,7 +485,7 @@ const versionLine = document.getElementById('version')!;
 /// report is a great deal more useful with it than without.
 invoke<string>('app_version')
   .then((version) => {
-    versionLine.textContent = `OverTerm ${version}`;
+    versionLine.textContent = `oTerm ${version}`;
   })
   .catch((err) => {
     // Never swallowed: a version that quietly fails to appear is how
@@ -452,8 +515,120 @@ const scrollback = field<HTMLInputElement>('scrollback');
 const opacity = field<HTMLInputElement>('opacity');
 const opacityValue = field<HTMLElement>('opacity-value');
 
+const themeButtons = document.querySelectorAll<HTMLButtonElement>('.theme-toggle');
+const systemIsDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+/// Which theme is actually on screen, which is not the same as the setting:
+/// "system" resolves to whichever the machine is set to.
+function effectiveTheme(choice: Theme): 'light' | 'dark' {
+  if (choice === 'system') return systemIsDark.matches ? 'dark' : 'light';
+  return choice;
+}
+
+/// Put the theme on the page and back into every terminal.
+///
+/// The terminals need doing by hand: xterm reads its colours once when it
+/// is built, so a live session keeps the old palette until it is told
+/// otherwise, and the window ends up half in each theme.
+function applyTheme(choice: Theme) {
+  if (choice === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', choice);
+
+  const shown = effectiveTheme(choice);
+  // The stylesheet picks the glyph off this: the button offers the theme
+  // you are not in, so it shows where you are going rather than where you
+  // are.
+  document.documentElement.dataset.shown = shown;
+  for (const button of themeButtons) {
+    button.title =
+      choice === 'system'
+        ? 'Following the system (click to pick one)'
+        : `Switch to ${shown === 'light' ? 'dark' : 'light'} (right-click to follow the system)`;
+  }
+
+  for (const session of sessions) {
+    session.term.options.theme = {
+      background: token('--body'),
+      foreground: token('--ink'),
+      cursor: token('--ink'),
+    };
+  }
+}
+
+/// Following the system means tracking it while it changes.
+systemIsDark.addEventListener('change', () => {
+  if (settings?.theme === 'system') applyTheme('system');
+});
+
+for (const button of themeButtons) {
+  button.addEventListener('click', () => {
+    if (!settings) return;
+    const next: Theme = effectiveTheme(settings.theme) === 'light' ? 'dark' : 'light';
+    settings = { ...settings, theme: next };
+    applyTheme(next);
+    persist(settings);
+  });
+  // The third option is deliberately off the cycle: two clicks should not
+  // be able to land you somewhere you cannot get back from.
+  button.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    if (!settings) return;
+    settings = { ...settings, theme: 'system' };
+    applyTheme('system');
+    persist(settings);
+  });
+}
+
+const showInDock = field<HTMLInputElement>('show-in-dock');
+const panelWidth = field<HTMLInputElement>('panel-width');
+const panelHeight = field<HTMLInputElement>('panel-height');
+
+/// Put a size the backend settled on back into the two fields.
+///
+/// It answers with what it applied rather than what was asked for, since
+/// a size below the usable minimum is raised and a preset is worked out
+/// from the screen.
+function showPanelSize(size: { width: number; height: number }) {
+  panelWidth.value = String(size.width);
+  panelHeight.value = String(size.height);
+  if (settings) {
+    settings = {
+      ...settings,
+      window: { ...settings.window, panel_width: size.width, panel_height: size.height },
+    };
+  }
+}
+
+function applyTypedSize() {
+  const width = Number(panelWidth.value);
+  const height = Number(panelHeight.value);
+  if (!width || !height) return;
+  invoke<{ width: number; height: number }>('set_panel_size', { width, height })
+    .then(showPanelSize)
+    .catch((err) => {
+      settingsNote.textContent = `Could not resize: ${err}`;
+      settingsNote.classList.add('failed');
+    });
+}
+
+for (const input of [panelWidth, panelHeight]) {
+  input.addEventListener('change', applyTypedSize);
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>('.preset')) {
+  button.addEventListener('click', () => {
+    invoke<{ width: number; height: number }>('size_preset', { name: button.dataset.size })
+      .then(showPanelSize)
+      .catch((err) => {
+        settingsNote.textContent = `Could not resize: ${err}`;
+        settingsNote.classList.add('failed');
+      });
+  });
+}
+
 function showSettings(current: Settings) {
   settings = current;
+  applyTheme(current.theme);
   collapseOnSubmit.checked = current.window.collapse_on_submit;
   collapseDelay.value = String(current.window.collapse_delay_ms);
   expandWhenWanted.checked = current.window.expand_when_wanted;
@@ -464,6 +639,9 @@ function showSettings(current: Settings) {
   fontFamily.value = current.terminal.font_family;
   fontSize.value = String(current.terminal.font_size);
   scrollback.value = String(current.terminal.scrollback);
+  showInDock.checked = current.show_in_dock;
+  panelWidth.value = String(current.window.panel_width);
+  panelHeight.value = String(current.window.panel_height);
   opacity.value = String(current.opacity);
   opacityValue.textContent = `${current.opacity}%`;
   applyTerminalSettings(current);
@@ -495,7 +673,12 @@ function saveSettings() {
   const next: Settings = {
     ...settings,
     opacity: Number(opacity.value),
+    show_in_dock: showInDock.checked,
     window: {
+      // Spread first: the size lives in here too and is applied through
+      // its own command, so rebuilding this object from the checkboxes
+      // alone would quietly throw it away.
+      ...settings.window,
       collapse_on_submit: collapseOnSubmit.checked,
       collapse_delay_ms: Number(collapseDelay.value) || 0,
       expand_when_wanted: expandWhenWanted.checked,
@@ -531,7 +714,7 @@ opacity.addEventListener('input', () => {
 });
 opacity.addEventListener('change', saveSettings);
 
-for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound]) {
+for (const input of [collapseOnSubmit, expandWhenWanted, cueGlow, cueSound, showInDock]) {
   input.addEventListener('change', saveSettings);
 }
 for (const input of [collapseDelay, revealStalled, fontSize, scrollback, fontFamily]) {
@@ -609,7 +792,7 @@ function refreshHooks() {
       claudeHooks.checked = installed;
       hooksNote.classList.remove('failed');
       hooksNote.textContent = installed
-        ? 'Four entries in ~/.claude/settings.json let OverTerm read exactly when a turn starts, finishes or asks you something. Turning this off removes them and leaves the rest of that file alone.'
+        ? 'Four entries in ~/.claude/settings.json let oTerm read exactly when a turn starts, finishes or asks you something. Turning this off removes them and leaves the rest of that file alone.'
         : 'Not set up. Detection falls back to reading the terminal, which is what every other tool gets. Turning this on adds four entries to ~/.claude/settings.json.';
     })
     .catch((err) => {
@@ -884,7 +1067,7 @@ const MARKS: Record<string, string> = {
   antigravity: antigravityMark,
 };
 
-function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null }) {
+function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null; cwd: string | null }) {
   const el = session.tab.querySelector('.label') as HTMLElement;
   const mark = MARKS[agent.id];
   if (mark) {
@@ -904,6 +1087,8 @@ function setLabel(session: Session, agent: { id: string; label: string; icon: st
   // terminal underneath it.
   el.style.color = agent.color ?? '';
   session.tab.title = agent.label;
+  session.cwd = agent.cwd;
+  render();
 }
 
 /// Put a session on screen and take the previous one off.
@@ -953,10 +1138,11 @@ async function addSession(): Promise<void> {
     lastCause: '',
     lastTurnMs: null,
     pending: '',
+    cwd: null,
   };
   sessions.push(session);
   tab.addEventListener('click', () => activate(session));
-  setLabel(session, { id: '', label: String(sessions.length), icon: null, color: null });
+  setLabel(session, { id: '', label: String(sessions.length), icon: null, color: null, cwd: null });
 
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
     if (active !== session) return;

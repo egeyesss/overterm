@@ -25,9 +25,30 @@ pub const EVENT_MODE: &str = "overterm://mode";
 pub const EVENT_ATTENTION: &str = "overterm://attention";
 
 /// Height of the collapsed bar, in logical pixels.
-const BAR_HEIGHT: f64 = 64.0;
-/// Height to restore to if the window was never measured while expanded.
-const DEFAULT_PANEL_HEIGHT: f64 = 620.0;
+///
+/// Two rows: the status strip and somewhere to type. This has a twin in
+/// `tauri.conf.json` as the window's minimum height, and the two have to
+/// move together or the window ends up a different size from the layout
+/// inside it.
+const BAR_HEIGHT: f64 = 68.0;
+/// How much of the expanded window's width the collapsed bar keeps.
+///
+/// It follows the panel so that picking a smaller terminal gives a smaller
+/// bar, and it is a fraction rather than the same width because out of the
+/// way it should take less room than it does in use.
+const BAR_WIDTH_FRACTION: f64 = 0.72;
+/// Narrowest the bar goes. Below this the path and the timer start
+/// fighting each other for the row.
+const MIN_BAR_WIDTH: f64 = 380.0;
+/// Widest the bar goes, however large the terminal is set. A bar as wide
+/// as a half-screen window is not out of the way any more.
+const MAX_BAR_WIDTH: f64 = 620.0;
+
+/// Width of the collapsed bar for a given expanded width.
+fn bar_width(panel_width: f64) -> f64 {
+    (panel_width * BAR_WIDTH_FRACTION).clamp(MIN_BAR_WIDTH, MAX_BAR_WIDTH)
+}
+
 /// Gap between the two checks that a collapse is safe. Claude repaints its
 /// status area every several seconds while it sits idle, which reads as
 /// activity for a moment; a session that is genuinely working is still
@@ -92,18 +113,20 @@ struct Windowing {
     /// Height to restore when expanding, remembered from the last time
     /// the window was expanded so the user's own resizing survives.
     panel_height: f64,
+    panel_width: f64,
 }
 
 #[derive(Clone)]
 pub struct Choreographer(Arc<Inner>);
 
 impl Choreographer {
-    pub fn new(cfg: ChoreoConfig) -> Self {
+    pub fn new(cfg: ChoreoConfig, panel_width: f64, panel_height: f64) -> Self {
         Self(Arc::new(Inner {
             cfg: Mutex::new(cfg),
             state: Mutex::new(Windowing {
                 mode: WindowMode::default(),
-                panel_height: DEFAULT_PANEL_HEIGHT,
+                panel_height,
+                panel_width,
             }),
             generation: AtomicU64::new(0),
             sessions: Mutex::new(HashMap::new()),
@@ -149,11 +172,21 @@ impl Choreographer {
         self.0.sessions.lock().unwrap().remove(id);
     }
 
-    /// Whether some session other than `except` is waiting on the user.
+    /// Whether some session other than `except` has something to show.
     fn others_want_user(&self, except: &str) -> bool {
         self.0.sessions.lock().unwrap().iter().any(|(id, session)| {
             id != except && matches!(session.state, AgentState::Done | AgentState::NeedsInput)
         })
+    }
+
+    /// Whether some session other than `except` is blocked on an answer.
+    fn others_need_answer(&self, except: &str) -> bool {
+        self.0
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(id, session)| id != except && session.state == AgentState::NeedsInput)
     }
 
     /// Bring the terminal back when a collapsed session stops working
@@ -175,7 +208,7 @@ impl Choreographer {
                 // Only a collapsed window has anything to reveal, and only
                 // a session that is busy on paper can be stalled: one that
                 // already concluded has had its say.
-                if mode != WindowMode::Bar || !this.any_session_busy() || this.working() {
+                if mode != WindowMode::Bar || !this.anything_stuck() {
                     still_for_ms = 0;
                     continue;
                 }
@@ -202,20 +235,37 @@ impl Choreographer {
     /// can see is reason enough to keep it. With no sessions there is
     /// nothing to protect, so an unanswerable question is not a reason to
     /// refuse.
-    fn working(&self) -> bool {
-        let checks: Vec<WorkCheck> = {
+    /// Whether a session is sitting on something nobody can see.
+    ///
+    /// Busy while doing no work is what a program that printed a question
+    /// and is waiting on it looks like. A session that is idle, or that
+    /// has finished, is not stuck: it is simply not doing anything, and a
+    /// shell sitting at its prompt is the normal resting state of every
+    /// tab somebody is not currently using.
+    fn stuck(state: AgentState, working: bool) -> bool {
+        state == AgentState::Busy && !working
+    }
+
+    /// Whether any session in the window is stuck.
+    ///
+    /// This is the question both the collapse and the stall watcher want.
+    /// Asking instead whether *every* session is working means one idle
+    /// tab stops the window from ever collapsing, since an idle tab is
+    /// doing no work by definition.
+    fn anything_stuck(&self) -> bool {
+        let sessions: Vec<(AgentState, WorkCheck)> = {
             let sessions = self.0.sessions.lock().unwrap();
-            sessions.values().map(|s| s.work_check.clone()).collect()
+            sessions
+                .values()
+                .map(|s| (s.state, s.work_check.clone()))
+                .collect()
         };
         // Released before the checks run: each one reaches into a
         // detector, and holding this meanwhile would make every state
         // change in every other session queue up behind it.
-        checks.iter().all(|check| check())
-    }
-
-    fn any_session_busy(&self) -> bool {
-        let sessions = self.0.sessions.lock().unwrap();
-        sessions.values().any(|s| s.state == AgentState::Busy)
+        sessions
+            .iter()
+            .any(|(state, check)| Self::stuck(*state, check()))
     }
 
     pub fn mode(&self) -> WindowMode {
@@ -238,6 +288,7 @@ impl Choreographer {
         // that has just concluded does not count itself as one of the
         // others waiting.
         let others_want_user = self.others_want_user(id);
+        let others_need_answer = self.others_need_answer(id);
 
         let user_asked = {
             let mut sessions = self.0.sessions.lock().unwrap();
@@ -263,6 +314,7 @@ impl Choreographer {
         let ctx = Context {
             user_asked,
             others_want_user,
+            others_need_answer,
         };
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
         for action in plan(&event, &self.cfg(), ctx) {
@@ -292,11 +344,11 @@ impl Choreographer {
                     // that printed a question and is waiting on an answer
                     // holds the state at Busy too, and collapsing then
                     // hides the very thing the user has to respond to.
-                    if !still_current() || !this.working() {
+                    if !still_current() || this.anything_stuck() {
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(CONFIRM_MS));
-                    if !still_current() || !this.working() {
+                    if !still_current() || this.anything_stuck() {
                         return;
                     }
                     this.collapse(&app);
@@ -318,6 +370,42 @@ impl Choreographer {
         }
     }
 
+    /// Record the size the window is at, if it is the expanded one.
+    ///
+    /// Called while somebody drags the window's edge. The bar has a size
+    /// of its own, so a resize in that mode is not a preference and is
+    /// ignored.
+    pub fn remember_panel_size(&self, width: f64, height: f64) -> bool {
+        let mut state = self.0.state.lock().unwrap();
+        if state.mode != WindowMode::Panel {
+            return false;
+        }
+        if state.panel_width == width && state.panel_height == height {
+            return false;
+        }
+        state.panel_width = width;
+        state.panel_height = height;
+        true
+    }
+
+    /// Set the expanded size directly, from the settings sheet.
+    pub fn set_panel_size<R: Runtime>(&self, app: &AppHandle<R>, width: f64, height: f64) {
+        let mode = {
+            let mut state = self.0.state.lock().unwrap();
+            state.panel_width = width;
+            state.panel_height = height;
+            state.mode
+        };
+        if let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) {
+            // Collapsed, the bar is what needs re-fitting: the panel size
+            // is stored and takes effect the next time it expands.
+            match mode {
+                WindowMode::Panel => resize_keeping_top(&window, width, height),
+                WindowMode::Bar => resize_keeping_top(&window, bar_width(width), BAR_HEIGHT),
+            }
+        }
+    }
+
     fn collapse<R: Runtime>(&self, app: &AppHandle<R>) {
         let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) else {
             return;
@@ -330,11 +418,17 @@ impl Choreographer {
             if let Some(height) = logical_height(&window) {
                 state.panel_height = height;
             }
+            if let Some(width) = logical_width(&window) {
+                state.panel_width = width;
+            }
             state.mode = WindowMode::Bar;
         }
-        if let Some(width) = logical_width(&window) {
-            resize_keeping_top(&window, width, BAR_HEIGHT);
-        }
+        let width = {
+            let state = self.0.state.lock().unwrap();
+            bar_width(state.panel_width)
+        };
+        let _ = window.set_resizable(false);
+        resize_keeping_top(&window, width, BAR_HEIGHT);
         let _ = app.emit(
             EVENT_MODE,
             ModePayload {
@@ -347,14 +441,13 @@ impl Choreographer {
         let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) else {
             return;
         };
-        let height = {
+        let (width, height) = {
             let mut state = self.0.state.lock().unwrap();
             state.mode = WindowMode::Panel;
-            state.panel_height
+            (state.panel_width, state.panel_height)
         };
-        if let Some(width) = logical_width(&window) {
-            resize_keeping_top(&window, width, height);
-        }
+        let _ = window.set_resizable(true);
+        resize_keeping_top(&window, width, height);
         if raise {
             // An agent finishing its work must never pull keyboard focus
             // out of whatever the user is typing in.
@@ -465,5 +558,75 @@ pub fn hide_window(app: AppHandle) {
         && let Err(e) = window.hide()
     {
         eprintln!("[choreograph] hide failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_idle_session_is_not_stuck() {
+        // The bug this is here to keep fixed: a second tab sitting at its
+        // shell prompt, having finished whatever it ran, used to stop the
+        // window from ever collapsing for the tab that was working.
+        assert!(!Choreographer::stuck(AgentState::Idle, false));
+        assert!(!Choreographer::stuck(AgentState::Done, false));
+        assert!(!Choreographer::stuck(AgentState::NeedsInput, false));
+    }
+
+    #[test]
+    fn busy_while_doing_no_work_is_stuck() {
+        // What a program that printed a question and is waiting on it
+        // looks like: it holds the state at Busy and does nothing.
+        assert!(Choreographer::stuck(AgentState::Busy, false));
+    }
+
+    #[test]
+    fn busy_and_working_is_just_working() {
+        assert!(!Choreographer::stuck(AgentState::Busy, true));
+    }
+
+    #[test]
+    fn the_bar_follows_the_terminal_it_belongs_to() {
+        // Picking a smaller terminal should give a smaller bar, so the two
+        // read as the same window rather than as unrelated sizes.
+        let small = bar_width(520.0);
+        let medium = bar_width(660.0);
+        assert!(
+            small < medium,
+            "a smaller terminal has to give a smaller bar: {small} vs {medium}"
+        );
+        assert!(
+            medium < 660.0,
+            "out of the way it should take less room than in use"
+        );
+    }
+
+    #[test]
+    fn the_bar_stays_between_its_two_ends() {
+        // A tiny terminal must not give a bar too narrow for the path and
+        // the timer, and a half-screen one must not give a bar so wide it
+        // stops being out of the way.
+        assert_eq!(bar_width(100.0), MIN_BAR_WIDTH);
+        assert_eq!(bar_width(4000.0), MAX_BAR_WIDTH);
+    }
+
+    #[test]
+    fn the_collapsed_height_matches_the_window_minimum() {
+        // The bar's height is decided here and the window's minimum is
+        // decided in tauri.conf.json. If they drift, the window is a
+        // different size from the layout inside it and the bar either
+        // clips or floats in a gap.
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("the config is JSON");
+        let minimum = config["app"]["windows"][0]["minHeight"]
+            .as_f64()
+            .expect("the main window sets a minimum height");
+
+        assert_eq!(
+            minimum, BAR_HEIGHT,
+            "tauri.conf.json says {minimum} and the bar is {BAR_HEIGHT}"
+        );
     }
 }

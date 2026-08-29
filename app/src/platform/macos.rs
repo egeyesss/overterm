@@ -22,7 +22,7 @@
 //! caller.
 
 use objc2_app_kit::{NSApplication, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
-use tauri::{ActivationPolicy, App, Runtime, WebviewWindow};
+use tauri::{ActivationPolicy, AppHandle, Runtime, WebviewWindow};
 
 /// Borrow the window's AppKit object.
 ///
@@ -78,6 +78,50 @@ pub fn process_path(pid: i32) -> Option<String> {
     }
     let path = std::str::from_utf8(&buf[..written as usize]).ok()?;
     (!path.is_empty()).then(|| path.to_string())
+}
+
+/// Working directory of the process running as `pid`.
+///
+/// A session is a shell and the shell changes directory, so this is asked
+/// for the foreground process rather than recorded when the session was
+/// spawned. The directory a session was launched in stops being true the
+/// first time somebody types `cd`, which is why the value at spawn is not
+/// used for this.
+pub fn process_cwd(pid: i32) -> Option<String> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+
+    // Safety: the struct is ours, zeroed, and the size passed is its real
+    // one. A pid that has gone, or one owned by another user, returns
+    // something other than the full size rather than writing anything.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            std::ptr::addr_of_mut!(info).cast(),
+            size,
+        )
+    };
+    if written != size {
+        return None;
+    }
+
+    // The path is a C string inside a fixed buffer, so it ends at the
+    // first NUL rather than at the end of the array.
+    // libc declares that buffer as 32 arrays of 32 rather than one of
+    // 1024, to stay buildable on older compilers, so it has to be
+    // flattened before it reads as text.
+    let bytes: Vec<u8> = info
+        .pvi_cdir
+        .vip_path
+        .iter()
+        .flatten()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    let path = String::from_utf8(bytes).ok()?;
+    (!path.is_empty()).then_some(path)
 }
 
 /// The command line of the process running as `pid`.
@@ -257,18 +301,28 @@ pub fn report_state<R: Runtime>(
     })
 }
 
-/// Become an accessory app: no Dock icon, no menu bar of its own.
+/// Whether the app appears in the Dock and the app switcher.
 ///
-/// Which is what a hotkey-summoned window that lives on top of other
-/// things wants to be, and how every comparable overlay ships. It also
-/// settles the leftover where clicking the terminal made this the
-/// frontmost app.
+/// The two policies are a real trade rather than a preference. As a
+/// regular app it has a Dock icon, a Cmd+Tab entry and somewhere to drop
+/// files, which is what a terminal somebody uses all day should be. As an
+/// accessory it has none of those, and in exchange clicking its window
+/// does not make it the frontmost application, so the menu bar of
+/// whatever you were in stays where it was. That is what a
+/// hotkey-summoned overlay wants and how comparable tools ship.
 ///
-/// It is not what makes the window appear over another application's
-/// full-screen space; the collection behaviour above does that. This was
-/// added while looking for the cause and kept on its own merits.
-pub fn make_accessory<R: Runtime>(app: &mut App<R>) {
-    app.set_activation_policy(ActivationPolicy::Accessory);
+/// Neither is what makes the window float over another application's
+/// full-screen space; the collection behaviour above does that. So this
+/// can be changed freely without disturbing the overlay behaviour.
+pub fn set_dock_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
+    let policy = if visible {
+        ActivationPolicy::Regular
+    } else {
+        ActivationPolicy::Accessory
+    };
+    if let Err(e) = app.set_activation_policy(policy) {
+        eprintln!("[platform] could not set the activation policy: {e}");
+    }
 }
 
 /// Whether the window is on the Space the user is looking at.
@@ -278,5 +332,34 @@ pub fn is_on_active_space<R: Runtime>(window: &WebviewWindow<R>) -> bool {
     match unsafe { ns_window(window) } {
         Ok(ns) => ns.isOnActiveSpace(),
         Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_process_reports_its_own_working_directory() {
+        // Asking the kernel about this very process is the one case where
+        // the right answer is already known, so it is what proves the FFI
+        // reads the struct correctly rather than merely compiling.
+        let expected = std::env::current_dir().expect("the test has a working directory");
+        let pid = std::process::id() as i32;
+
+        let got = process_cwd(pid).expect("a live process has a working directory");
+
+        assert_eq!(
+            std::path::Path::new(&got).canonicalize().unwrap(),
+            expected.canonicalize().unwrap(),
+            "asked for {pid}, got {got}"
+        );
+    }
+
+    #[test]
+    fn a_pid_that_is_not_running_reports_nothing() {
+        // Nothing shown beats something wrong, so a lookup that cannot be
+        // answered has to come back empty rather than with a stale path.
+        assert_eq!(process_cwd(-1), None);
     }
 }

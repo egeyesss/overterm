@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OverTerm",
+  "productName": "oTerm",
   "version": "0.2.0",
   "identifier": "io.github.egeyesilyurt.overterm",
   "build": {
@@ -12,11 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "OverTerm",
-        "width": 960,
+        "title": "oTerm",
+        "width": 660,
         "height": 620,
         "minWidth": 400,
-        "minHeight": 64,
+        "minHeight": 68,
+        "resizable": true,
         "decorations": false,
         "alwaysOnTop": true
       }

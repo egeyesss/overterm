@@ -163,15 +163,39 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
         }
     }
 
-    let agent = settings.label_for(&path, &args);
+    let mut agent = settings.label_for(&path, &args);
     // A program writing our markers is Claude Code, exactly, because
     // nothing else has them installed. That outranks anything read off a
     // path, and it is what covers a tool whose executable is named after
     // something other than itself.
     if reports_itself && agent.icon.is_none() {
-        return Some(settings.label_for("claude", &[]));
+        agent = settings.label_for("claude", &[]);
     }
+    // Asked of the foreground process rather than remembered from the
+    // spawn, because a shell changes directory and the value from spawn
+    // stops being true the first time somebody types `cd`.
+    agent.cwd = crate::platform::process_cwd(pid).map(|path| shorten_home(&path));
     Some(agent)
+}
+
+/// Write a path the way a shell prompt does, with the home directory as
+/// `~`. Done here rather than in the interface because this side is the
+/// one that knows where home is.
+fn shorten_home(path: &str) -> String {
+    let Some(home) = std::env::var_os("HOME") else {
+        return path.to_string();
+    };
+    let home = home.to_string_lossy();
+    if home.is_empty() {
+        return path.to_string();
+    }
+    if path == home {
+        return "~".to_string();
+    }
+    match path.strip_prefix(&format!("{home}/")) {
+        Some(rest) => format!("~/{rest}"),
+        None => path.to_string(),
+    }
 }
 
 /// Report a batch of transitions: the overlay reacts to them, and the
@@ -405,5 +429,33 @@ pub fn kill_session(
             handle.session.kill().map_err(|e| e.to_string())
         }
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_under_home_is_written_with_a_tilde() {
+        // SAFETY: single-threaded test, and the value is restored below.
+        unsafe { std::env::set_var("HOME", "/Users/someone") };
+        assert_eq!(
+            shorten_home("/Users/someone/dev/overterm"),
+            "~/dev/overterm"
+        );
+        assert_eq!(shorten_home("/Users/someone"), "~");
+    }
+
+    #[test]
+    fn a_path_outside_home_is_left_alone() {
+        unsafe { std::env::set_var("HOME", "/Users/someone") };
+        // The prefix matches as text but is a different directory, so it
+        // must not be rewritten.
+        assert_eq!(
+            shorten_home("/Users/someone-else/dev"),
+            "/Users/someone-else/dev"
+        );
+        assert_eq!(shorten_home("/opt/homebrew"), "/opt/homebrew");
     }
 }

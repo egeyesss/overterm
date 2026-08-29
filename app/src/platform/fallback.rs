@@ -5,7 +5,7 @@
 //! Until then the window is a plain always-on-top window, which is what
 //! `tauri.conf.json` already asks for.
 
-use tauri::{App, Runtime, WebviewWindow};
+use tauri::{AppHandle, Runtime, WebviewWindow};
 
 pub fn set_floating<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     window.set_always_on_top(true).map_err(|e| e.to_string())
@@ -57,8 +57,22 @@ pub fn process_args(_pid: i32) -> Option<Vec<String>> {
     None
 }
 
-/// Nothing to do: the Dock and Spaces are a macOS idea.
-pub fn make_accessory<R: Runtime>(_app: &mut App<R>) {}
+/// Ports fill this in too. Linux has it as the `/proc/<pid>/cwd` symlink,
+/// which is simpler than the macOS route. Windows has no equivalent that
+/// works on another process without opening a handle to it.
+///
+/// Returning `None` is safe: the status bar leaves the path out rather
+/// than showing a wrong one.
+pub fn process_cwd(_pid: i32) -> Option<String> {
+    None
+}
+
+/// Ports fill this in. Windows hides an app from the taskbar with
+/// `WS_EX_TOOLWINDOW` on the window rather than with an app-wide policy,
+/// and most Linux desktops read a window type hint. Doing nothing leaves
+/// the app in whatever the desktop shows by default, which is the safe
+/// failure: visible and ordinary.
+pub fn set_dock_visible<R: Runtime>(_app: &AppHandle<R>, _visible: bool) {}
 
 /// Spaces are a macOS idea, so the window is always where the user is.
 pub fn is_on_active_space<R: Runtime>(_window: &WebviewWindow<R>) -> bool {

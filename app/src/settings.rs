@@ -11,7 +11,7 @@ use overterm_core::choreo::{ChoreoConfig, Cues};
 use overterm_core::detect::Profile;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime, State, WebviewWindow};
+use tauri::{AppHandle, Manager, Runtime, State, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 use crate::choreograph::Choreographer;
@@ -59,6 +59,18 @@ pub struct Settings {
     /// Chord that summons or hides the window from any application.
     pub hotkey: String,
 
+    /// Which theme to draw, or to follow the machine's own setting.
+    pub theme: Theme,
+
+    /// Whether the app appears in the Dock and the app switcher.
+    ///
+    /// On by default, because a terminal somebody uses all day should be
+    /// somewhere they can click it. Turning it off makes this an
+    /// accessory app instead, which is what a hotkey-summoned overlay
+    /// wants: no Dock icon, and clicking the window no longer makes it
+    /// the frontmost application, so the menu bar you were using stays.
+    pub show_in_dock: bool,
+
     // Tables have to come after the plain values above: TOML puts every
     // key before the first section header, so a scalar declared after a
     // table cannot be written back out.
@@ -71,6 +83,36 @@ pub struct Settings {
     /// so adding one of your own does not silently drop the ones that
     /// ship with the app.
     pub agents: Vec<AgentProfile>,
+}
+
+/// Size the expanded window starts at, in logical pixels.
+pub const DEFAULT_PANEL_WIDTH: u32 = 660;
+pub const DEFAULT_PANEL_HEIGHT: u32 = 620;
+
+/// Smallest the expanded window may be set to.
+///
+/// A terminal narrower than this wraps every agent's interface into
+/// nonsense, and one shorter shows too little to be worth expanding into.
+pub const MIN_PANEL_WIDTH: u32 = 400;
+pub const MIN_PANEL_HEIGHT: u32 = 200;
+
+/// Clamp a requested window size to something usable.
+pub fn sane_panel_size(width: u32, height: u32) -> (u32, u32) {
+    (width.max(MIN_PANEL_WIDTH), height.max(MIN_PANEL_HEIGHT))
+}
+
+/// Light, dark, or whatever the machine is set to.
+///
+/// Following the system is the default, because an overlay that sits on
+/// top of everything else looks wrong when it is the only bright thing on
+/// a dark desktop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Light,
+    Dark,
+    #[default]
+    System,
 }
 
 /// What OverTerm knows about one command it might find in a session.
@@ -153,10 +195,23 @@ pub struct TerminalSettings {
     pub scrollback: u32,
 }
 
+/// The font the design asks for, shipped with the app rather than assumed
+/// to be installed.
+pub const DEFAULT_FONT: &str = "'IBM Plex Mono', Menlo, Monaco, monospace";
+
+/// What the default used to be, before the design.
+///
+/// A settings file written by an older build has this recorded, because
+/// saving writes every field whether or not anybody chose it. Somebody who
+/// picked their own font keeps it; somebody who only ever accepted the
+/// default should get the new one rather than being pinned to a choice they
+/// never made.
+const SUPERSEDED_FONT: &str = "Menlo, Monaco, \"SF Mono\", monospace";
+
 impl Default for TerminalSettings {
     fn default() -> Self {
         Self {
-            font_family: "Menlo, Monaco, \"SF Mono\", monospace".into(),
+            font_family: DEFAULT_FONT.into(),
             font_size: 13,
             scrollback: 10_000,
         }
@@ -176,6 +231,14 @@ pub struct WindowSettings {
     /// How long a collapsed session may sit still, having concluded
     /// nothing, before the terminal returns anyway.
     pub reveal_when_stalled_ms: u64,
+
+    /// Size of the expanded window, in logical pixels.
+    ///
+    /// Written back when the window is resized by dragging it, so the size
+    /// somebody settles on is the one they get next launch. Collapsing
+    /// does not touch it: the bar has a size of its own.
+    pub panel_width: u32,
+    pub panel_height: u32,
 }
 
 /// How the app asks for attention.
@@ -197,6 +260,8 @@ impl Default for WindowSettings {
             collapse_delay_ms: cfg.collapse_delay_ms,
             expand_when_wanted: cfg.expand_when_wanted,
             reveal_when_stalled_ms: cfg.reveal_when_stalled_ms,
+            panel_width: DEFAULT_PANEL_WIDTH,
+            panel_height: DEFAULT_PANEL_HEIGHT,
         }
     }
 }
@@ -221,6 +286,8 @@ impl Default for Settings {
             // arrived faded.
             opacity: MAX_OPACITY,
             hotkey: DEFAULT_HOTKEY.into(),
+            theme: Theme::default(),
+            show_in_dock: true,
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
@@ -258,6 +325,7 @@ impl Settings {
                 label: basename(path).to_string(),
                 icon: None,
                 color: None,
+                cwd: None,
             },
         }
     }
@@ -302,6 +370,7 @@ impl Settings {
                     label: user.label.clone(),
                     icon: user.icon.clone(),
                     color: user.color.clone(),
+                    cwd: None,
                 });
             }
             if let Some((name, label, color, _)) =
@@ -312,6 +381,7 @@ impl Settings {
                     label: (*label).to_string(),
                     icon: None,
                     color: Some((*color).to_string()),
+                    cwd: None,
                 });
             }
         }
@@ -362,6 +432,18 @@ impl Settings {
     }
 
     /// The stored preferences as the rules engine wants them.
+    /// Move a setting nobody chose onto its new default.
+    ///
+    /// Saving writes every field, so a file written by an older build
+    /// records the old default as though it were a decision. Only an exact
+    /// match is replaced, which leaves anybody who picked their own font
+    /// alone.
+    fn retire_superseded_defaults(&mut self) {
+        if self.terminal.font_family == SUPERSEDED_FONT {
+            self.terminal.font_family = DEFAULT_FONT.into();
+        }
+    }
+
     pub fn choreo(&self) -> ChoreoConfig {
         ChoreoConfig {
             collapse_on_submit: self.window.collapse_on_submit,
@@ -423,6 +505,13 @@ pub struct Agent {
     pub icon: Option<String>,
     /// Colour for the icon, as CSS.
     pub color: Option<String>,
+
+    /// Where this session currently is, filled in by whoever knows the
+    /// process rather than by the lookup that names it. `None` means the
+    /// question could not be answered, and the status bar then shows no
+    /// path rather than a stale one.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 /// Reduce a path component to the name of the tool inside it.
@@ -489,8 +578,11 @@ pub fn load_from(path: &Path) -> Settings {
             return Settings::default();
         }
     };
-    match toml::from_str(&text) {
-        Ok(settings) => settings,
+    match toml::from_str::<Settings>(&text) {
+        Ok(mut settings) => {
+            settings.retire_superseded_defaults();
+            settings
+        }
         Err(e) => {
             eprintln!("[settings] ignoring {}: {e}", path.display());
             Settings::default()
@@ -506,11 +598,105 @@ pub fn load() -> Settings {
 /// Put the stored opacity on the window. Called once the window exists.
 pub fn apply_to_window<R: Runtime>(window: &WebviewWindow<R>) {
     let settings = load();
+
+    // The size somebody settled on last time, whether they typed it or
+    // dragged the window to it.
+    let (width, height) =
+        sane_panel_size(settings.window.panel_width, settings.window.panel_height);
+    if let Err(e) = window.set_size(tauri::LogicalSize::new(width as f64, height as f64)) {
+        eprintln!("[settings] could not restore the window size: {e}");
+    }
+
     if settings.opacity == MAX_OPACITY {
         return; // already how a window arrives
     }
     if let Err(e) = window.set_opacity(settings.alpha()) {
         eprintln!("[settings] could not set opacity: {e}");
+    }
+}
+
+/// What a size command hands back, so the sheet can show what it got
+/// rather than what it asked for.
+#[derive(Clone, Copy, Serialize)]
+pub struct PanelSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Set the expanded window's size from the settings sheet.
+#[tauri::command]
+pub fn set_panel_size<R: Runtime>(
+    app: AppHandle<R>,
+    choreo: State<'_, Choreographer>,
+    width: u32,
+    height: u32,
+) -> PanelSize {
+    let (width, height) = sane_panel_size(width, height);
+    choreo.set_panel_size(&app, width as f64, height as f64);
+    save_panel_size(width, height);
+    PanelSize { width, height }
+}
+
+/// Sizes worth having a button for.
+///
+/// Large is measured against the screen rather than written down, because
+/// "most of the height" means nothing without knowing the screen. It takes
+/// half the width on purpose: this is a window you keep beside your work,
+/// so covering all of it would defeat the point.
+#[tauri::command]
+pub fn size_preset<R: Runtime>(
+    app: AppHandle<R>,
+    choreo: State<'_, Choreographer>,
+    name: String,
+) -> Result<PanelSize, String> {
+    let window = app
+        .get_webview_window(crate::MAIN_WINDOW)
+        .ok_or("there is no main window")?;
+    let (screen_w, screen_h) = screen_size(&window);
+
+    let (width, height) = match name.as_str() {
+        "small" => (520.0, 380.0),
+        "medium" => (DEFAULT_PANEL_WIDTH as f64, DEFAULT_PANEL_HEIGHT as f64),
+        "large" => (screen_w / 2.0, screen_h * 0.92),
+        other => return Err(format!("no size called {other}")),
+    };
+
+    let (width, height) = sane_panel_size(width.round() as u32, height.round() as u32);
+    choreo.set_panel_size(&app, width as f64, height as f64);
+    save_panel_size(width, height);
+    Ok(PanelSize { width, height })
+}
+
+/// The screen this window is on, in logical pixels. Falls back to a
+/// common laptop size, since a preset is better than an error here.
+fn screen_size<R: Runtime>(window: &WebviewWindow<R>) -> (f64, f64) {
+    match window.current_monitor() {
+        Ok(Some(monitor)) => {
+            let scale = monitor.scale_factor();
+            let size = monitor.size();
+            (size.width as f64 / scale, size.height as f64 / scale)
+        }
+        _ => (1440.0, 900.0),
+    }
+}
+
+/// Store the expanded window's size.
+///
+/// Read from disk and written straight back rather than taking whatever
+/// the interface last held, because a size arrives from dragging a window
+/// edge and a sheet somebody has open must not be able to undo the rest of
+/// their settings with it.
+pub fn save_panel_size(width: u32, height: u32) {
+    let Some(path) = path() else { return };
+    let mut settings = load_from(&path);
+    let (width, height) = sane_panel_size(width, height);
+    if settings.window.panel_width == width && settings.window.panel_height == height {
+        return;
+    }
+    settings.window.panel_width = width;
+    settings.window.panel_height = height;
+    if let Err(e) = save_to(&path, &settings) {
+        eprintln!("[settings] could not store the window size: {e}");
     }
 }
 
@@ -590,6 +776,9 @@ pub fn save_settings<R: Runtime>(
     if next.opacity != stored.opacity {
         window.set_opacity(next.alpha())?;
     }
+    if next.show_in_dock != stored.show_in_dock {
+        crate::platform::set_dock_visible(window.app_handle(), next.show_in_dock);
+    }
 
     let path = path().ok_or("no home directory to store settings in")?;
     save_to(&path, &next)?;
@@ -633,6 +822,8 @@ mod tests {
             claude_hooks_notice_seen: true,
             hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
+            theme: Theme::Light,
+            show_in_dock: true,
             window: WindowSettings {
                 collapse_on_submit: false,
                 collapse_delay_ms: 900,
@@ -975,6 +1166,95 @@ mod tests {
             "the stack has to end somewhere safe: {}",
             terminal.font_family
         );
+    }
+
+    #[test]
+    fn a_font_nobody_chose_moves_to_the_new_default() {
+        // Saving writes every field, so the old default sits in every
+        // settings file written before the design landed as though somebody
+        // had picked it. They did not.
+        let path = scratch("superseded-font");
+        std::fs::write(
+            &path,
+            format!("[terminal]\nfont_family = {SUPERSEDED_FONT:?}\n"),
+        )
+        .unwrap();
+
+        let settings = load_from(&path);
+
+        assert_eq!(settings.terminal.font_family, DEFAULT_FONT);
+    }
+
+    #[test]
+    fn a_font_somebody_did_choose_is_left_alone() {
+        let path = scratch("chosen-font");
+        std::fs::write(&path, "[terminal]\nfont_family = \"Fira Code\"\n").unwrap();
+
+        let settings = load_from(&path);
+
+        assert_eq!(settings.terminal.font_family, "Fira Code");
+    }
+
+    #[test]
+    fn a_new_install_appears_in_the_dock() {
+        // A terminal somebody uses all day should be somewhere they can
+        // click it. Overlay behaviour is the option, not the default.
+        assert!(Settings::default().show_in_dock);
+    }
+
+    #[test]
+    fn the_dock_choice_survives_a_round_trip() {
+        // It sits among the scalars, above the tables. A field written
+        // after a table cannot be serialised at all, so this also catches
+        // it being moved into the wrong half of the struct.
+        let path = scratch("dock-round-trip");
+        let settings = Settings {
+            show_in_dock: false,
+            ..Default::default()
+        };
+        save_to(&path, &settings).unwrap();
+
+        assert!(!load_from(&path).show_in_dock);
+    }
+
+    #[test]
+    fn a_size_below_the_usable_minimum_is_raised() {
+        // A window narrower than this wraps every agent's interface into
+        // nonsense, so a typed 1 has to become something usable rather
+        // than being taken at its word.
+        assert_eq!(
+            sane_panel_size(1, 1),
+            (MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT),
+            "a tiny request has to be raised to something usable"
+        );
+        // A reasonable one is left exactly alone.
+        assert_eq!(sane_panel_size(900, 700), (900, 700));
+    }
+
+    #[test]
+    fn storing_a_size_leaves_the_rest_of_the_settings_alone() {
+        // A size arrives from dragging a window edge, which can happen
+        // while the sheet is open, so it must not write back a stale copy
+        // of everything else.
+        let path = scratch("panel-size");
+        let mut settings = Settings::default();
+        settings.terminal.font_size = 19;
+        settings.hotkey = "CmdOrCtrl+Shift+J".into();
+        save_to(&path, &settings).unwrap();
+
+        // save_panel_size reads from the real config path, so drive the
+        // same read-modify-write by hand against this file.
+        let mut stored = load_from(&path);
+        let (w, h) = sane_panel_size(900, 700);
+        stored.window.panel_width = w;
+        stored.window.panel_height = h;
+        save_to(&path, &stored).unwrap();
+
+        let after = load_from(&path);
+        assert_eq!(after.window.panel_width, 900);
+        assert_eq!(after.window.panel_height, 700);
+        assert_eq!(after.terminal.font_size, 19, "an unrelated setting changed");
+        assert_eq!(after.hotkey, "CmdOrCtrl+Shift+J");
     }
 
     #[test]

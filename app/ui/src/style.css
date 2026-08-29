@@ -1,21 +1,149 @@
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+/* The palette, and the only copy of it. The terminal is drawn by xterm and
+   everything around it by CSS, so both read these back rather than keeping
+   their own. Light is the base and dark redefines the same names.
+
+   Status colours are written twice, once as oklch for CSS and once as hex
+   for xterm, which parses colours itself and does not understand oklch.
+   The hex values are those oklch values converted, so they are the same
+   colour and not a second opinion about it. */
 :root {
-  --bg: #1a1b26;
-  --fg: #c0caf5;
-  --dim: #565f89;
-  --line: #2f3349;
-  --busy: #e0af68;
-  --done: #9ece6a;
-  --needs: #f7768e;
+  color-scheme: light;
+
+  /* Surfaces. Chrome reads brighter than the transcript in both themes. */
+  --chrome: #FFFFFF;
+  --body: #F5F5F7;
+  --line: rgba(0, 0, 0, 0.07);
+  --ring: rgba(0, 0, 0, 0.08);
+
+  /* Ink, in four steps from the title down to a hint. */
+  --ink: #111111;
+  --ink-2: rgba(0, 0, 0, 0.6);
+  --ink-3: rgba(0, 0, 0, 0.42);
+  --ink-4: rgba(0, 0, 0, 0.28);
+
+  /* Status. The dot, the label on the pill, and the pill behind it. */
+  --busy: oklch(0.6 0.19 25);
+  --busy-ink: oklch(0.55 0.19 25);
+  --busy-pill: oklch(0.6 0.19 25 / 0.1);
+  --needs: oklch(0.72 0.16 60);
+  --needs-ink: oklch(0.5 0.13 60);
+  --needs-pill: oklch(0.72 0.16 60 / 0.14);
+  --done: oklch(0.6 0.16 145);
+  --done-ink: oklch(0.5 0.13 145);
+  --done-pill: oklch(0.62 0.16 145 / 0.12);
+
+  /* Handed to xterm, so hex only. */
+  --brand: oklch(0.72 0.16 60);
+
+  --busy-hex: #DB4241;
+  --needs-hex: #EB881F;
+  --done-hex: #31983D;
+  /* Search hits, painted onto the canvas by the addon. The design does not
+     cover search, so this is a neutral blue that reads on both surfaces. */
+  --match: #3D59A1;
+
+  --needs-ring: oklch(0.72 0.16 60 / 0.35);
+  --scrim: rgba(0, 0, 0, 0.28);
+  --shadow: 0 14px 44px rgba(0, 0, 0, 0.34), 0 0 0 1px var(--ring);
+  --radius-window: 12px;
+  --radius-control: 8px;
+  --radius-tile: 9px;
+
+  --mono: 'IBM Plex Mono', Menlo, Monaco, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+}
+
+/* Dark is the light pair flipped: chrome stays the brighter of the two.
+   The status hues are the same, lifted so they hold contrast on #101012. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --chrome: #1C1C1E;
+  --body: #101012;
+  --line: rgba(255, 255, 255, 0.08);
+  --ring: rgba(255, 255, 255, 0.11);
+
+  --ink: #FFFFFF;
+  --ink-2: rgba(255, 255, 255, 0.6);
+  --ink-3: rgba(255, 255, 255, 0.45);
+  --ink-4: rgba(255, 255, 255, 0.32);
+
+  --busy: oklch(0.68 0.19 25);
+  --busy-ink: oklch(0.78 0.14 25);
+  --busy-pill: oklch(0.68 0.19 25 / 0.16);
+  --needs: oklch(0.82 0.15 60);
+  --needs-ink: oklch(0.88 0.12 60);
+  --needs-pill: oklch(0.82 0.15 60 / 0.16);
+  --done: oklch(0.75 0.16 145);
+  --done-ink: oklch(0.82 0.13 145);
+  --done-pill: oklch(0.75 0.16 145 / 0.16);
+
+  --brand: oklch(0.82 0.15 60);
+
+  --busy-hex: #F75D59;
+  --needs-hex: #FFAB55;
+  --done-hex: #65C86B;
+  --match: #3D59A1;
+
+  --needs-ring: oklch(0.82 0.15 60 / 0.4);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow: 0 18px 54px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--ring);
+}
+
+/* No data-theme attribute means follow the system. Guarded so that
+   choosing light explicitly still wins over a dark system setting. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --chrome: #1C1C1E;
+    --body: #101012;
+    --line: rgba(255, 255, 255, 0.08);
+    --ring: rgba(255, 255, 255, 0.11);
+
+    --ink: #FFFFFF;
+    --ink-2: rgba(255, 255, 255, 0.6);
+    --ink-3: rgba(255, 255, 255, 0.45);
+    --ink-4: rgba(255, 255, 255, 0.32);
+
+    --busy: oklch(0.68 0.19 25);
+    --busy-ink: oklch(0.78 0.14 25);
+    --busy-pill: oklch(0.68 0.19 25 / 0.16);
+    --needs: oklch(0.82 0.15 60);
+    --needs-ink: oklch(0.88 0.12 60);
+    --needs-pill: oklch(0.82 0.15 60 / 0.16);
+    --done: oklch(0.75 0.16 145);
+    --done-ink: oklch(0.82 0.13 145);
+    --done-pill: oklch(0.75 0.16 145 / 0.16);
+
+    --busy-hex: #F75D59;
+    --needs-hex: #FFAB55;
+    --done-hex: #65C86B;
+    --match: #3D59A1;
+
+    --shadow: 0 18px 54px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--ring);
+  }
+}
+
+/* No system titlebar, so the window draws its own corner and the hairline
+   that separates it from whatever is behind. */
+body {
+  border-radius: var(--radius-window);
+  box-shadow: inset 0 0 0 1px var(--ring);
 }
 
 html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--chrome);
   overflow: hidden;
-  font-family: Menlo, Monaco, 'SF Mono', monospace;
-  color: var(--fg);
+  font-family: var(--mono);
+  color: var(--ink);
 }
 
 body {
@@ -27,14 +155,16 @@ body {
    not mostly chrome. */
 #titlebar {
   flex: none;
-  height: 26px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px 0 12px;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  background: var(--chrome);
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
-  color: var(--dim);
+  font: 500 11.5px/1 var(--sans);
+  color: var(--ink-2);
   user-select: none;
 }
 
@@ -86,12 +216,13 @@ body.attention-needs::after {
    terminal rather than on labels. */
 #tabs {
   flex: none;
-  width: 50px;
+  width: 52px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 0;
+  gap: 10px;
+  padding: 12px 0;
+  background: var(--chrome);
   border-right: 1px solid var(--line);
   overflow-y: auto;
 }
@@ -99,22 +230,27 @@ body.attention-needs::after {
 .tab {
   position: relative;
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--dim);
-  font: inherit;
-  font-size: 10px;
+  border: none;
+  border-radius: var(--radius-tile);
+  background: var(--chrome);
+  color: var(--ink-3);
+  font: 500 11px/1 var(--mono);
   cursor: pointer;
-  /* A name longer than the box is cut off rather than spilling out of
-     it. The whole thing is still in the tooltip. */
+}
+
+/* A name longer than the box is cut off rather than spilling out of it.
+   This is on the label rather than the button, because the status dot is
+   positioned outside the button on purpose and a clip here would take the
+   corner off it. */
+.tab .label {
   overflow: hidden;
+  max-width: 100%;
 }
 
 .tab .label {
@@ -163,25 +299,33 @@ body.attention-needs::after {
 }
 
 .tab:hover {
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .tab.active {
-  border-color: var(--busy);
-  color: var(--fg);
+  color: var(--ink);
 }
 
 /* Per-tab state, so a session that wants you is visible from the tab
    even while you are looking at a different one. */
 .tab .dot {
+  /* Nothing to report is shown by there being no dot, so an idle tab does
+     not carry an empty ring. */
+  display: none;
   position: absolute;
   top: -3px;
   right: -3px;
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 2px solid var(--bg);
+  border: 2px solid var(--chrome);
   background: transparent;
+}
+
+.tab.state-busy .dot,
+.tab.state-done .dot,
+.tab.state-needsInput .dot {
+  display: block;
 }
 
 .tab.state-busy .dot {
@@ -196,25 +340,25 @@ body.attention-needs::after {
 
 #tab-add {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
+  border: none;
+  border-radius: var(--radius-tile);
   background: none;
-  color: var(--dim);
-  font: inherit;
-  font-size: 15px;
-  line-height: 1;
+  color: var(--ink-4);
+  font: 400 15px/1 var(--mono);
   cursor: pointer;
 }
 
-#tab-add:hover {
-  color: var(--fg);
-  border-color: var(--dim);
+#tab-add:hover,
+.tab:not(.active):hover {
+  color: var(--ink-2);
+  background: var(--line);
 }
 
 #terminals {
+  background: var(--body);
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -245,36 +389,50 @@ body.attention-needs::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: rgba(26, 27, 38, 0.85);
-  border: 1px solid var(--line);
-  font: inherit;
-  font-size: 11px;
-  color: var(--fg);
+  padding: 3px 9px 3px 7px;
+  border-radius: 20px;
+  background: var(--pill-bg, var(--line));
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--pill-ink, var(--ink-2));
   white-space: nowrap;
 }
 
 .pill .dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--dim);
+  background: var(--pill-dot, var(--ink-3));
   flex: none;
 }
 
-.pill .elapsed {
-  color: var(--dim);
+.elapsed {
+  font: 400 11px/1 var(--mono);
+  color: var(--ink-4);
+  white-space: nowrap;
 }
 
-body.state-busy .pill .dot {
-  background: var(--busy);
+.elapsed:empty {
+  display: none;
 }
-body.state-done .pill .dot {
-  background: var(--done);
+
+/* One state sets all three: the dot, the label ink and the wash behind
+   them. Set on the body so the collapsed pill and the expanded one agree
+   without either knowing about the other. */
+body.state-busy {
+  --pill-dot: var(--busy);
+  --pill-ink: var(--busy-ink);
+  --pill-bg: var(--busy-pill);
 }
-body.state-needsInput .pill .dot {
-  background: var(--needs);
+body.state-done {
+  --pill-dot: var(--done);
+  --pill-ink: var(--done-ink);
+  --pill-bg: var(--done-pill);
+}
+body.state-needsInput {
+  --pill-dot: var(--needs);
+  --pill-ink: var(--needs-ink);
+  --pill-bg: var(--needs-pill);
 }
 
 /* Spinner while the agent works, so the bar shows life even when the
@@ -305,18 +463,18 @@ body.state-busy .pill .dot {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   background: none;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: var(--dim);
+  border: none;
+  border-radius: 7px;
+  color: var(--ink-3);
   cursor: pointer;
 }
 
 .icon:hover {
-  color: var(--fg);
+  color: var(--ink);
   border-color: var(--line);
 }
 
@@ -334,50 +492,67 @@ body.state-busy .pill .dot {
   flex: 1;
   min-height: 0;
   box-sizing: border-box;
-  padding: 6px 10px;
-  gap: 4px;
   flex-direction: column;
-  justify-content: center;
+  background: var(--chrome);
 }
 
-#bar-top,
-#bar-bottom {
+/* The status strip: what it is doing, where, and for how long. Nothing
+   in it is selectable, so grabbing the path moves the window rather than
+   highlighting the text. */
+#bar-top {
+  user-select: none;
+  flex: none;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
+  padding: 0 12px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
 }
 
-/* Last non-empty line of output, so the bar shows progress. */
-#bar-line {
+/* Somewhere to type, on the transcript surface so the two rows read as
+   chrome over content the way the expanded window does. */
+#bar-bottom {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: var(--chrome);
+}
+
+/* Where the session is. Given the middle of the row, so it yields space to
+   the timer and the buttons rather than pushing them off the end. */
+#bar-cwd {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  color: var(--dim);
+  text-overflow: ellipsis;
+  font: 400 11.5px/1 var(--mono);
+  color: var(--ink-3);
 }
 
-#bar-bottom .prompt {
-  color: var(--done);
-  font-size: 13px;
-  flex: none;
-}
-
+/* The status line: what it is doing, where, and for how long. */
+/* Somewhere to type, on the transcript surface so the two rows read as
+   chrome over content the way the expanded window does. */
+/* Last non-empty line of output, so the bar shows progress. */
+/* The gutter. Its glyph turns while the agent works and rests when it
+   does not, which is the whole status story at a glance. */
 #bar-input {
   flex: 1;
   min-width: 0;
+  padding: 0 14px;
   background: none;
   border: none;
   outline: none;
-  color: var(--fg);
-  font: inherit;
-  font-size: 13px;
+  color: var(--ink);
+  font: 400 13.5px/1 var(--mono);
 }
 
 #bar-input::placeholder {
-  color: var(--line);
+  color: var(--ink-4);
 }
 
 /* Find bar, floating over the top-right of the terminal. */
@@ -392,7 +567,7 @@ body.state-busy .pill .dot {
   padding: 4px 6px 4px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--chrome);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
@@ -405,7 +580,7 @@ body.state-busy .pill .dot {
   background: none;
   border: none;
   outline: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
 }
@@ -416,7 +591,7 @@ body.state-busy .pill .dot {
 
 #find-count {
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -443,7 +618,7 @@ body.state-busy .pill .dot {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--chrome);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
@@ -456,12 +631,12 @@ body.state-busy .pill .dot {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--fg);
+  color: var(--ink);
 }
 
 #first-run code {
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 #first-run button {
@@ -470,14 +645,14 @@ body.state-busy .pill .dot {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
 }
 
 #first-run button:hover {
-  border-color: var(--dim);
+  border-color: var(--ink-3);
 }
 
 /* Settings sheet. Covers the terminal rather than resizing it, so the
@@ -491,7 +666,7 @@ body.state-busy .pill .dot {
   justify-content: center;
   padding: 26px 12px 12px;
   box-sizing: border-box;
-  background: rgba(26, 27, 38, 0.75);
+  background: var(--scrim);
 }
 
 #settings[hidden] {
@@ -506,7 +681,7 @@ body.state-busy .pill .dot {
   max-height: 100%;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--bg);
+  background: var(--chrome);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
@@ -519,7 +694,7 @@ body.state-busy .pill .dot {
   padding: 8px 8px 8px 12px;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .sheet-body {
@@ -533,7 +708,7 @@ body.state-busy .pill .dot {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .sheet-body .row {
@@ -542,18 +717,18 @@ body.state-busy .pill .dot {
   gap: 8px;
   padding: 5px 0;
   font-size: 12px;
-  color: var(--fg);
+  color: var(--ink);
   cursor: pointer;
 }
 
 /* A qualifier on the setting above it, so it reads as one sentence. */
 .sheet-body .row.indent {
   padding-left: 22px;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .sheet-body .row .unit {
-  color: var(--dim);
+  color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
 
@@ -563,7 +738,7 @@ body.state-busy .pill .dot {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
 }
@@ -575,7 +750,7 @@ body.state-busy .pill .dot {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
 }
@@ -601,7 +776,7 @@ body.state-busy .pill .dot {
   margin: 14px 0 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .version {
@@ -609,7 +784,7 @@ body.state-busy .pill .dot {
   padding-top: 12px;
   border-top: 1px solid var(--line);
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .version:empty {
@@ -635,4 +810,257 @@ body.mode-bar #first-run {
 
 body.mode-bar #bar {
   display: flex;
+}
+
+/* Solid shapes, so the gear reads as a cog and the crescent as a crescent.
+   The default icon styling strokes as well as fills, which thickens a
+   silhouette until its cut-outs close up. */
+.icon svg.solid {
+  stroke: none;
+  fill-rule: evenodd;
+}
+
+/* The toggle offers the theme you are not in, so exactly one of the two
+   is ever on screen. `data-shown` carries the theme actually being drawn,
+   which is not the setting: "system" resolves to one or the other. */
+.glyph-moon,
+.glyph-sun {
+  display: none;
+}
+
+:root[data-shown='light'] .glyph-moon,
+:root[data-shown='dark'] .glyph-sun {
+  display: block;
+}
+
+/* The active tab is ringed rather than filled, so the mark inside it stays
+   the thing you read. The hue is the tab's own state: the rail exists to
+   show the sessions you are not looking at. */
+.tab.state-busy {
+  --tab-hue: var(--busy);
+}
+.tab.state-done {
+  --tab-hue: var(--done);
+}
+.tab.state-needsInput {
+  --tab-hue: var(--needs);
+}
+
+.tab.active {
+  box-shadow: 0 0 0 1.5px var(--tab-hue, var(--ink-4));
+}
+
+/* Needing an answer is the one state that earns the whole window. The ring
+   is the design's amber, drawn just inside the edge so it reads on any
+   background the overlay happens to be sitting on. */
+body.state-needsInput {
+  box-shadow:
+    inset 0 0 0 1px var(--ring),
+    inset 0 0 0 3px var(--needs-ring);
+}
+
+/* Where the session is, in the collapsed status line. Cut from the left,
+   because the end of a path is the part that says which project it is. */
+
+
+/* The size presets, sitting under the two fields they are shortcuts for. */
+.row.presets {
+  gap: 6px;
+}
+
+.preset {
+  flex: 1;
+  padding: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--chrome);
+  color: var(--ink-2);
+  font: 500 11.5px/1 var(--mono);
+  cursor: pointer;
+}
+
+.preset:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
+}
+
+/* Resize grips. A borderless window has no frame to grab, so these sit
+   over the edges and hand the drag to the window manager. They are
+   invisible on purpose: the cursor is the affordance. */
+#grips .grip {
+  position: fixed;
+  z-index: 40;
+}
+
+/* Collapsed is a fixed size, so there is nothing to drag. */
+body.mode-bar #grips {
+  display: none;
+}
+
+.grip.n,
+.grip.s {
+  left: 6px;
+  right: 6px;
+  height: 5px;
+  cursor: ns-resize;
+}
+.grip.n {
+  top: 0;
+}
+.grip.s {
+  bottom: 0;
+}
+
+.grip.w,
+.grip.e {
+  top: 6px;
+  bottom: 6px;
+  width: 5px;
+  cursor: ew-resize;
+}
+.grip.w {
+  left: 0;
+}
+.grip.e {
+  right: 0;
+}
+
+.grip.nw,
+.grip.ne,
+.grip.sw,
+.grip.se {
+  width: 12px;
+  height: 12px;
+}
+.grip.nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.grip.se {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+.grip.ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.grip.sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+/* The app's own mark, sitting where the agent glyph used to. It is the
+   icon in miniature: a dark window with a white chrome bar, the o, and
+   the block cursor.
+
+   Its colours are fixed rather than themed. It is the same object as the
+   icon in the Dock, and that one does not change when the desktop does. */
+.mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: 14px;
+  border-radius: 5px;
+  background: #101012;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.mark-bar {
+  flex: none;
+  height: 4px;
+  background: #ffffff;
+}
+
+.mark-face {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.mark-o {
+  font: 500 9px/1 var(--mono);
+  color: #ffffff;
+  letter-spacing: -0.03em;
+  /* The ink of a lowercase o sits below the middle of its line box, so
+     centring the box leaves the letter low and out of line with the
+     caret. Same correction the app icon needed, scaled down. */
+  transform: translateY(-0.5px);
+}
+
+.mark-caret {
+  flex: none;
+  width: 2px;
+  height: 6px;
+  border-radius: 1px;
+  background: oklch(0.82 0.15 60);
+}
+
+/* The o of oTerm, carrying the same amber as the block cursor in the app
+   icon. It is the one piece of colour in the header, so the wordmark and
+   the icon read as the same object.
+
+   Clicks pass through to the title behind it, which is what carries the
+   drag region: without this, dragging the window by its own name stops
+   working over that one letter. */
+.brand-o {
+  color: var(--brand);
+  pointer-events: none;
+}
+
+/* Two groups of buttons in one row. The left pair change how the app
+   looks and behaves; the right three act on the window. A hairline
+   between them is enough to say they are different kinds of thing. */
+.control-split {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--line);
+}
+
+/* The window controls carry the status palette rather than colours of
+   their own, so the window has one set of hues. Green goes to the one
+   that keeps the session in view, amber to the one that puts it away,
+   and red to the one that ends it. Amber is the o of oTerm. */
+.icon.collapse,
+.icon.expand {
+  color: var(--done);
+}
+
+.icon.hide {
+  color: var(--brand);
+}
+
+.icon.close {
+  color: var(--busy);
+}
+
+/* Muted until pointed at, so three colours in the corner do not shout
+   over a terminal that is trying to be read. */
+.icon.collapse,
+.icon.expand,
+.icon.hide,
+.icon.close {
+  opacity: 0.72;
+}
+
+.icon.collapse:hover,
+.icon.expand:hover,
+.icon.hide:hover,
+.icon.close:hover {
+  opacity: 1;
+}
+
+/* The one button that cannot be undone gets the strongest hover. */
+.icon.close:hover {
+  background: var(--busy-pill);
 }

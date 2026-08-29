@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Removes OverTerm and the entries it added to Claude Code's settings.
+# Removes oTerm and the entries it added to Claude Code's settings.
 #
 #   curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/uninstall.sh | sh
 #
@@ -10,7 +10,7 @@
 set -eu
 
 APPS="${OVERTERM_APPDIR:-/Applications}"
-DEST="$APPS/OverTerm.app"
+DEST="$APPS/oTerm.app"
 # Lowercase, inside the capitalised bundle. The capitalised spelling works
 # on an ordinary Mac and fails on a case sensitive filesystem.
 BIN="$DEST/Contents/MacOS/overterm"
@@ -24,7 +24,7 @@ if [ ! -d "$DEST" ]; then
 fi
 [ -w "$APPS" ] || fail "$APPS is not writable by $(whoami). Run it again with sudo."
 
-osascript -e 'quit app "OverTerm"' >/dev/null 2>&1 || true
+osascript -e 'quit app "oTerm"' >/dev/null 2>&1 || true
 
 # macOS runs none of the app's own code when its bundle is deleted, so the
 # Claude Code entries would outlive the thing that reads them. Ask it to
@@ -36,6 +36,8 @@ whose command mentions overterm from ~/.claude/settings.json"
 fi
 
 rm -rf "$DEST"
+# Takes the old name with it, for anyone who installed before the rename.
+rm -rf "$APPS/OverTerm.app"
 
 say "Removed $DEST"
 say "Settings are still at ~/.config/overterm if you want them gone too."
