@@ -4,7 +4,7 @@
 
 Run Claude Code, Codex, Gemini CLI or any other command line tool in a
 small terminal that floats above everything else. While the agent works,
-oTerm shrinks to a status bar and stays out of your way so that you can 
+oTerm shrinks to a status bar and stays out of your way so that you can
 watch your favourite show while your agent works. The moment it
 finishes or asks a question, the terminal shows up on its own, without
 you needing to keep alt+tab-ing to check if the task is finished.
@@ -20,10 +20,10 @@ curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh |
 That's all. You can run that line to install or update the outdated oTerm you already have.
 It puts `oTerm.app` in your Applications folder, 
 and you can open it from Spotlight or Finder like any other app.
-After that, you can open it by the small terminal icon in the menu bar. 
+After that, you can open it by the small terminal icon in the menu bar.
 You can show/hide the terminal with `Cmd+Shift+O` after that.
 
-There is no Dock icon on purpose. macOS gives an app with a Dock icon 
+There is no Dock icon on purpose. macOS gives an app with a Dock icon
 a desktop of its own and switches you to it, which
 would stop the window appearing over a full-screen video.
 
@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/uninstall.sh
 
 ### Why am I asking you to run a script?
 
-The app is not signed with an Apple Developer certificate, which costs 99/yr, and
+The app is not signed with an Apple Developer certificate, which costs $99/yr, and
 I am broke so I don't want to spend money on that for a side project.
 macOS refuses to open an unsigned app that carries the
 `com.apple.quarantine` attribute, and tells you it cannot be checked for
@@ -54,8 +54,8 @@ That attribute is set by whatever downloaded the file. Browsers set it and
 Homebrew sets it. `curl` does not, so an app it downloads is never
 quarantined and opens normally.
 
-This gets around the check rather than passing it. 
-What you do get is that every release is built by a GitHub Actions workflow that lives here, 
+This gets around the check rather than passing it.
+What you do get is that every release is built by a GitHub Actions workflow that lives here,
 and the logs are all public. The script also checks the download against the
 checksum published beside it, which catches a file that arrived damaged.
 
@@ -76,7 +76,7 @@ xattr -dr com.apple.quarantine /Applications/oTerm.app
 **It works out what your agent is doing.** Idle, working, finished, or
 waiting on an answer, with nothing to install and no cooperation from the
 tool. It reads the terminal the way you would, so it works with a CLI it
-has never heard of. **It is designed mainly for Claude Code usage** so it does 
+has never heard of. **It is designed mainly for Claude Code usage** so it does
 better than guess for CC, which is the section below.
 
 **It gets out of the way, then comes back.** Hand a session a job and the
@@ -91,10 +91,10 @@ including over another app's full-screen window.
 **Several agents at once.** Each session gets a tab, labelled with
 whichever tool is running in it and carrying its own status dot, so you
 can see which one wants you without switching. The window only tucks
-itself away once **every** **session** is busy.
+itself away once **every session** is busy.
 
 **It is a real terminal.** A real PTY, so full colour interactive
-interfaces work untouched. Find, clickable links, **GPU** **rendering**, correct
+interfaces work untouched. Find, clickable links, **GPU rendering**, correct
 emoji widths, and Shift+Enter for a multi-line prompt.
 
 **It is yours to arrange.** Light and dark or follow the system, drag any
