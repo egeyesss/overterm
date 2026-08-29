@@ -110,14 +110,24 @@ pub struct Context {
     /// has typed anything at all.
     pub user_asked: bool,
 
-    /// Some *other* session is waiting on the user right now.
+    /// Some *other* session has something to show.
     ///
-    /// The window is shared, so hiding it for one session takes it away
-    /// from every other one. A session that has been left sitting on a
-    /// question is the case that matters: collapsing on top of it hides
-    /// the thing somebody has to answer, and nothing would bring it back
-    /// because that session already reached its conclusion.
+    /// Used for the attention cue only. A cue belongs to whichever session
+    /// raised it, so another session's glow is not this session's to
+    /// clear.
     pub others_want_user: bool,
+
+    /// Some *other* session is blocked on an answer right now.
+    ///
+    /// This is the one that must not be hidden. A session sitting on a
+    /// question goes nowhere until somebody answers it, and collapsing
+    /// takes away the only way to.
+    ///
+    /// A session that has merely *finished* does not count. Done is where
+    /// every command ends up, so counting it would mean one finished tab
+    /// stopping the window from ever collapsing again, and its output is
+    /// in the scrollback either way.
+    pub others_need_answer: bool,
 }
 
 /// Decide what the window should do about one event.
@@ -135,7 +145,7 @@ pub fn plan(event: &ChoreoEvent, cfg: &ChoreoConfig, ctx: Context) -> Vec<Window
             if !ctx.others_want_user {
                 actions.push(WindowAction::ClearAttention);
             }
-            if cfg.collapse_on_submit && !ctx.others_want_user {
+            if cfg.collapse_on_submit && !ctx.others_need_answer {
                 actions.push(WindowAction::Collapse {
                     after_ms: cfg.collapse_delay_ms,
                 });
@@ -185,6 +195,7 @@ mod tests {
         Context {
             user_asked: true,
             others_want_user: false,
+            others_need_answer: false,
         }
     }
 
@@ -285,6 +296,17 @@ mod tests {
         Context {
             user_asked: true,
             others_want_user: true,
+            others_need_answer: true,
+        }
+    }
+
+    /// Another session has finished and is sitting at its prompt. It has
+    /// something on screen, but it is not blocked on anybody.
+    fn others_finished() -> Context {
+        Context {
+            user_asked: true,
+            others_want_user: true,
+            others_need_answer: false,
         }
     }
 
@@ -302,6 +324,37 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, WindowAction::Collapse { .. })),
             "collapsed on top of a session waiting for an answer: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn a_session_that_merely_finished_does_not_hold_the_window_open() {
+        // Done is where every command ends up, so a tab that ran anything
+        // at all sits there in Done indefinitely. Counting that as a
+        // reason not to collapse means one finished tab stops the window
+        // from ever getting out of the way again, which is the bug this
+        // is here to keep fixed.
+        let cfg = ChoreoConfig::default();
+        let actions = plan(&ChoreoEvent::Submitted, &cfg, others_finished());
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, WindowAction::Collapse { .. })),
+            "a finished session blocked the collapse: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn a_finished_session_still_keeps_its_own_cue() {
+        // It does not hold the window open, but its glow is still its
+        // own: submitting to a different session must not clear it.
+        let cfg = ChoreoConfig::default();
+        let actions = plan(&ChoreoEvent::Submitted, &cfg, others_finished());
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, WindowAction::ClearAttention)),
+            "cleared another session's cue: {actions:?}"
         );
     }
 

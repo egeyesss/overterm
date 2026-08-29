@@ -172,11 +172,21 @@ impl Choreographer {
         self.0.sessions.lock().unwrap().remove(id);
     }
 
-    /// Whether some session other than `except` is waiting on the user.
+    /// Whether some session other than `except` has something to show.
     fn others_want_user(&self, except: &str) -> bool {
         self.0.sessions.lock().unwrap().iter().any(|(id, session)| {
             id != except && matches!(session.state, AgentState::Done | AgentState::NeedsInput)
         })
+    }
+
+    /// Whether some session other than `except` is blocked on an answer.
+    fn others_need_answer(&self, except: &str) -> bool {
+        self.0
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(id, session)| id != except && session.state == AgentState::NeedsInput)
     }
 
     /// Bring the terminal back when a collapsed session stops working
@@ -198,7 +208,7 @@ impl Choreographer {
                 // Only a collapsed window has anything to reveal, and only
                 // a session that is busy on paper can be stalled: one that
                 // already concluded has had its say.
-                if mode != WindowMode::Bar || !this.any_session_busy() || this.working() {
+                if mode != WindowMode::Bar || !this.anything_stuck() {
                     still_for_ms = 0;
                     continue;
                 }
@@ -225,20 +235,37 @@ impl Choreographer {
     /// can see is reason enough to keep it. With no sessions there is
     /// nothing to protect, so an unanswerable question is not a reason to
     /// refuse.
-    fn working(&self) -> bool {
-        let checks: Vec<WorkCheck> = {
+    /// Whether a session is sitting on something nobody can see.
+    ///
+    /// Busy while doing no work is what a program that printed a question
+    /// and is waiting on it looks like. A session that is idle, or that
+    /// has finished, is not stuck: it is simply not doing anything, and a
+    /// shell sitting at its prompt is the normal resting state of every
+    /// tab somebody is not currently using.
+    fn stuck(state: AgentState, working: bool) -> bool {
+        state == AgentState::Busy && !working
+    }
+
+    /// Whether any session in the window is stuck.
+    ///
+    /// This is the question both the collapse and the stall watcher want.
+    /// Asking instead whether *every* session is working means one idle
+    /// tab stops the window from ever collapsing, since an idle tab is
+    /// doing no work by definition.
+    fn anything_stuck(&self) -> bool {
+        let sessions: Vec<(AgentState, WorkCheck)> = {
             let sessions = self.0.sessions.lock().unwrap();
-            sessions.values().map(|s| s.work_check.clone()).collect()
+            sessions
+                .values()
+                .map(|s| (s.state, s.work_check.clone()))
+                .collect()
         };
         // Released before the checks run: each one reaches into a
         // detector, and holding this meanwhile would make every state
         // change in every other session queue up behind it.
-        checks.iter().all(|check| check())
-    }
-
-    fn any_session_busy(&self) -> bool {
-        let sessions = self.0.sessions.lock().unwrap();
-        sessions.values().any(|s| s.state == AgentState::Busy)
+        sessions
+            .iter()
+            .any(|(state, check)| Self::stuck(*state, check()))
     }
 
     pub fn mode(&self) -> WindowMode {
@@ -261,6 +288,7 @@ impl Choreographer {
         // that has just concluded does not count itself as one of the
         // others waiting.
         let others_want_user = self.others_want_user(id);
+        let others_need_answer = self.others_need_answer(id);
 
         let user_asked = {
             let mut sessions = self.0.sessions.lock().unwrap();
@@ -286,6 +314,7 @@ impl Choreographer {
         let ctx = Context {
             user_asked,
             others_want_user,
+            others_need_answer,
         };
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
         for action in plan(&event, &self.cfg(), ctx) {
@@ -315,11 +344,11 @@ impl Choreographer {
                     // that printed a question and is waiting on an answer
                     // holds the state at Busy too, and collapsing then
                     // hides the very thing the user has to respond to.
-                    if !still_current() || !this.working() {
+                    if !still_current() || this.anything_stuck() {
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(CONFIRM_MS));
-                    if !still_current() || !this.working() {
+                    if !still_current() || this.anything_stuck() {
                         return;
                     }
                     this.collapse(&app);
@@ -535,6 +564,28 @@ pub fn hide_window(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_idle_session_is_not_stuck() {
+        // The bug this is here to keep fixed: a second tab sitting at its
+        // shell prompt, having finished whatever it ran, used to stop the
+        // window from ever collapsing for the tab that was working.
+        assert!(!Choreographer::stuck(AgentState::Idle, false));
+        assert!(!Choreographer::stuck(AgentState::Done, false));
+        assert!(!Choreographer::stuck(AgentState::NeedsInput, false));
+    }
+
+    #[test]
+    fn busy_while_doing_no_work_is_stuck() {
+        // What a program that printed a question and is waiting on it
+        // looks like: it holds the state at Busy and does nothing.
+        assert!(Choreographer::stuck(AgentState::Busy, false));
+    }
+
+    #[test]
+    fn busy_and_working_is_just_working() {
+        assert!(!Choreographer::stuck(AgentState::Busy, true));
+    }
 
     #[test]
     fn the_bar_follows_the_terminal_it_belongs_to() {
