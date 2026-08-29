@@ -89,6 +89,16 @@ pub fn process_args(pid: i32) -> Option<Vec<String>> {
     imp::process_args(pid)
 }
 
+/// Working directory of the process running as `pid`.
+///
+/// The fourth thing a port has to write, and the second that is about
+/// processes rather than windows. It is asked of the foreground process
+/// rather than recorded at spawn, because a shell changes directory and
+/// the value from spawn stops being true the moment it does.
+pub fn process_cwd(pid: i32) -> Option<String> {
+    imp::process_cwd(pid)
+}
+
 /// Tell the OS this is an overlay rather than an ordinary app.
 ///
 /// Separate from the window calls because it is a property of the

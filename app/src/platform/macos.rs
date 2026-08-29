@@ -80,6 +80,50 @@ pub fn process_path(pid: i32) -> Option<String> {
     (!path.is_empty()).then(|| path.to_string())
 }
 
+/// Working directory of the process running as `pid`.
+///
+/// A session is a shell and the shell changes directory, so this is asked
+/// for the foreground process rather than recorded when the session was
+/// spawned. The directory a session was launched in stops being true the
+/// first time somebody types `cd`, which is why the value at spawn is not
+/// used for this.
+pub fn process_cwd(pid: i32) -> Option<String> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+
+    // Safety: the struct is ours, zeroed, and the size passed is its real
+    // one. A pid that has gone, or one owned by another user, returns
+    // something other than the full size rather than writing anything.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            std::ptr::addr_of_mut!(info).cast(),
+            size,
+        )
+    };
+    if written != size {
+        return None;
+    }
+
+    // The path is a C string inside a fixed buffer, so it ends at the
+    // first NUL rather than at the end of the array.
+    // libc declares that buffer as 32 arrays of 32 rather than one of
+    // 1024, to stay buildable on older compilers, so it has to be
+    // flattened before it reads as text.
+    let bytes: Vec<u8> = info
+        .pvi_cdir
+        .vip_path
+        .iter()
+        .flatten()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    let path = String::from_utf8(bytes).ok()?;
+    (!path.is_empty()).then_some(path)
+}
+
 /// The command line of the process running as `pid`.
 ///
 /// Needed because a lot of these tools are npm packages, so the program

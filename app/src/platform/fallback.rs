@@ -57,6 +57,16 @@ pub fn process_args(_pid: i32) -> Option<Vec<String>> {
     None
 }
 
+/// Ports fill this in too. Linux has it as the `/proc/<pid>/cwd` symlink,
+/// which is simpler than the macOS route. Windows has no equivalent that
+/// works on another process without opening a handle to it.
+///
+/// Returning `None` is safe: the status bar leaves the path out rather
+/// than showing a wrong one.
+pub fn process_cwd(_pid: i32) -> Option<String> {
+    None
+}
+
 /// Nothing to do: the Dock and Spaces are a macOS idea.
 pub fn make_accessory<R: Runtime>(_app: &mut App<R>) {}
 

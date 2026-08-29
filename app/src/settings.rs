@@ -289,6 +289,7 @@ impl Settings {
                 label: basename(path).to_string(),
                 icon: None,
                 color: None,
+                cwd: None,
             },
         }
     }
@@ -333,6 +334,7 @@ impl Settings {
                     label: user.label.clone(),
                     icon: user.icon.clone(),
                     color: user.color.clone(),
+                    cwd: None,
                 });
             }
             if let Some((name, label, color, _)) =
@@ -343,6 +345,7 @@ impl Settings {
                     label: (*label).to_string(),
                     icon: None,
                     color: Some((*color).to_string()),
+                    cwd: None,
                 });
             }
         }
@@ -466,6 +469,13 @@ pub struct Agent {
     pub icon: Option<String>,
     /// Colour for the icon, as CSS.
     pub color: Option<String>,
+
+    /// Where this session currently is, filled in by whoever knows the
+    /// process rather than by the lookup that names it. `None` means the
+    /// question could not be answered, and the status bar then shows no
+    /// path rather than a stale one.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 /// Reduce a path component to the name of the tool inside it.

@@ -28,7 +28,7 @@ type PtyEvent =
   | { event: 'exited'; data: { code: number | null } }
   | {
       event: 'agentChanged';
-      data: { agent: { id: string; label: string; icon: string | null; color: string | null } };
+      data: { agent: { id: string; label: string; icon: string | null; color: string | null; cwd: string | null } };
     };
 
 type Cues = { glow: boolean; sound: boolean };
@@ -78,6 +78,8 @@ type Session = {
   /// How long the previous turn took, so the bar can say what the last
   /// one cost as well as what this one is costing.
   lastTurnMs: number | null;
+  /// Where this session currently is, or null when it could not be read.
+  cwd: string | null;
   /// Best-effort mirror of what the user has typed since the last submit.
   ///
   /// The real buffer belongs to whatever is running in the PTY and cannot
@@ -176,6 +178,7 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
 
 const body = document.body;
 const barLine = document.getElementById('bar-line')!;
+const barCwd = document.getElementById('bar-cwd')!;
 const barInput = document.getElementById('bar-input') as HTMLInputElement;
 const pills = document.querySelectorAll<HTMLElement>('.pill');
 
@@ -219,6 +222,8 @@ function render() {
   }
   body.classList.remove('state-idle', 'state-busy', 'state-needsInput', 'state-done');
   body.classList.add(`state-${active?.state ?? 'idle'}`);
+
+  barCwd.textContent = active?.cwd ?? '';
 
   if (mode === 'bar') {
     barLine.textContent = lastOutputLine();
@@ -976,7 +981,7 @@ const MARKS: Record<string, string> = {
   antigravity: antigravityMark,
 };
 
-function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null }) {
+function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null; cwd: string | null }) {
   const el = session.tab.querySelector('.label') as HTMLElement;
   const mark = MARKS[agent.id];
   if (mark) {
@@ -996,6 +1001,8 @@ function setLabel(session: Session, agent: { id: string; label: string; icon: st
   // terminal underneath it.
   el.style.color = agent.color ?? '';
   session.tab.title = agent.label;
+  session.cwd = agent.cwd;
+  render();
 }
 
 /// Put a session on screen and take the previous one off.
@@ -1045,10 +1052,11 @@ async function addSession(): Promise<void> {
     lastCause: '',
     lastTurnMs: null,
     pending: '',
+    cwd: null,
   };
   sessions.push(session);
   tab.addEventListener('click', () => activate(session));
-  setLabel(session, { id: '', label: String(sessions.length), icon: null, color: null });
+  setLabel(session, { id: '', label: String(sessions.length), icon: null, color: null, cwd: null });
 
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
     if (active !== session) return;
