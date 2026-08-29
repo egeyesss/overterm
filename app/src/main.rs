@@ -120,6 +120,7 @@ fn main() {
             settings::set_panel_size,
             settings::size_preset,
             app_version,
+            quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OverTerm");
@@ -149,6 +150,17 @@ fn panel_resized(app: &tauri::AppHandle, size: tauri::PhysicalSize<u32>) {
             settings::save_panel_size(width.round() as u32, height.round() as u32);
         }
     });
+}
+
+/// Quit, from the close button.
+///
+/// A real exit rather than closing the window: this app has no Dock icon
+/// to bring it back from, so a hidden window with the process still
+/// running would look exactly like having quit while still holding the
+/// summon shortcut.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 /// The version this build reports.

@@ -1015,3 +1015,52 @@ body.mode-bar #grips {
   color: var(--brand);
   pointer-events: none;
 }
+
+/* Two groups of buttons in one row. The left pair change how the app
+   looks and behaves; the right three act on the window. A hairline
+   between them is enough to say they are different kinds of thing. */
+.control-split {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--line);
+}
+
+/* The window controls carry the status palette rather than colours of
+   their own, so the window has one set of hues. Green goes to the one
+   that keeps the session in view, amber to the one that puts it away,
+   and red to the one that ends it. Amber is the o of oTerm. */
+.icon.collapse,
+.icon.expand {
+  color: var(--done);
+}
+
+.icon.hide {
+  color: var(--brand);
+}
+
+.icon.close {
+  color: var(--busy);
+}
+
+/* Muted until pointed at, so three colours in the corner do not shout
+   over a terminal that is trying to be read. */
+.icon.collapse,
+.icon.expand,
+.icon.hide,
+.icon.close {
+  opacity: 0.72;
+}
+
+.icon.collapse:hover,
+.icon.expand:hover,
+.icon.hide:hover,
+.icon.close:hover {
+  opacity: 1;
+}
+
+/* The one button that cannot be undone gets the strongest hover. */
+.icon.close:hover {
+  background: var(--busy-pill);
+}

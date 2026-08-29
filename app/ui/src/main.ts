@@ -290,6 +290,16 @@ for (const button of document.querySelectorAll('.icon.expand')) {
 for (const button of document.querySelectorAll('.icon.collapse')) {
   button.addEventListener('click', () => requestMode('bar'));
 }
+// Ends the process rather than hiding the window. With no Dock icon
+// there would be nothing to bring a hidden one back from, so a running
+// process behind an invisible window would look like a failed quit while
+// still holding the summon shortcut.
+for (const button of document.querySelectorAll('.icon.close')) {
+  button.addEventListener('click', () => {
+    invoke('quit_app').catch((err) => console.error('[quit] refused:', err));
+  });
+}
+
 for (const button of document.querySelectorAll('.icon.hide')) {
   button.addEventListener('click', () => invoke('hide_window').catch(() => {}));
 }
