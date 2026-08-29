@@ -70,7 +70,7 @@ jobs:
       - name: Check the artifact
         run: |
           set -eu
-          app=target/universal-apple-darwin/release/bundle/macos/OverTerm.app
+          app=target/universal-apple-darwin/release/bundle/macos/oTerm.app
           bin="$app/Contents/MacOS/overterm"
           version=$(jq -r .version app/tauri.conf.json)
 
@@ -116,15 +116,15 @@ jobs:
           # unmount. Its name carries no version so the download URL for
           # the newest release is always the same, which is what lets the
           # install script stay untouched between releases.
-          COPYFILE_DISABLE=1 tar -czf dist/OverTerm_universal.tar.gz \
-            -C "$bundle/macos" OverTerm.app
+          COPYFILE_DISABLE=1 tar -czf dist/oTerm_universal.tar.gz \
+            -C "$bundle/macos" oTerm.app
 
           # The disk image keeps its versioned name: the Homebrew cask
           # builds its URL out of the version.
-          cp "$bundle/dmg/OverTerm_${version}_universal.dmg" dist/
+          cp "$bundle/dmg/oTerm_${version}_universal.dmg" dist/
 
           cd dist
-          for f in OverTerm_universal.tar.gz "OverTerm_${version}_universal.dmg"; do
+          for f in oTerm_universal.tar.gz "oTerm_${version}_universal.dmg"; do
             shasum -a 256 "$f" > "$f.sha256"
           done
           ls -la

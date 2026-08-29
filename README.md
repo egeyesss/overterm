@@ -1,5 +1,8 @@
 # OverTerm
 
+**The app is called oTerm.** OverTerm is the project; oTerm is what you
+install, what sits in the Dock and what the window says.
+
 Agent-aware floating terminal. Runs Claude Code (or any CLI) in an always-on-top
 window that stays out of the way while the agent works, then gets your attention
 when it finishes or needs input.
@@ -7,7 +10,7 @@ when it finishes or needs input.
 ## Why
 
 CLI agents like Claude Code run for minutes at a time. You alt-tab away, and then
-you miss the moment they finish or ask you a question. OverTerm keeps the session
+you miss the moment they finish or ask you a question. oTerm keeps the session
 in a small always-on-top window, works out what the agent is doing, and collapses
 to a status bar while it runs. When it finishes or needs an answer, the terminal
 comes back on its own without taking keyboard focus from whatever you are doing.
@@ -80,7 +83,7 @@ quarantines what it downloads:
 
 ```sh
 brew install --cask egeyesss/overterm/overterm
-xattr -dr com.apple.quarantine /Applications/OverTerm.app
+xattr -dr com.apple.quarantine /Applications/oTerm.app
 ```
 
 On macOS 15 and later, opening the app from the right-click menu stopped
@@ -99,12 +102,12 @@ drop only the entries, use the switch in its settings.
 ## Claude Code
 
 Detection works on any CLI with nothing installed, by reading the terminal.
-For Claude Code it can be exact, so on first launch OverTerm adds four hook
+For Claude Code it can be exact, so on first launch oTerm adds four hook
 entries to `~/.claude/settings.json`: one each for a prompt being submitted,
 a turn finishing, a turn failing, and a permission prompt appearing.
 
 Every entry is a single `printf` that prints a fixed JSON object and exits.
-Claude Code turns that into an escape sequence in the terminal, and OverTerm
+Claude Code turns that into an escape sequence in the terminal, and oTerm
 reads it back out of the session it arrived on. Nothing listens on a port,
 there is no secret to handle, and it still works over SSH.
 
@@ -114,7 +117,7 @@ The app says so the first time it does it.
 There is a switch for them in the settings, which is the easiest way to
 put them back if you removed them or to take them out and keep the app.
 Deleting the four entries whose command mentions `overterm` from that file
-by hand works too, and OverTerm will not put them back. Detection falls
+by hand works too, and oTerm will not put them back. Detection falls
 back to reading the terminal, which is what every other CLI gets.
 
 ## Stack

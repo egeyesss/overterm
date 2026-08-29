@@ -474,7 +474,7 @@ const versionLine = document.getElementById('version')!;
 /// report is a great deal more useful with it than without.
 invoke<string>('app_version')
   .then((version) => {
-    versionLine.textContent = `OverTerm ${version}`;
+    versionLine.textContent = `oTerm ${version}`;
   })
   .catch((err) => {
     // Never swallowed: a version that quietly fails to appear is how
@@ -778,7 +778,7 @@ function refreshHooks() {
       claudeHooks.checked = installed;
       hooksNote.classList.remove('failed');
       hooksNote.textContent = installed
-        ? 'Four entries in ~/.claude/settings.json let OverTerm read exactly when a turn starts, finishes or asks you something. Turning this off removes them and leaves the rest of that file alone.'
+        ? 'Four entries in ~/.claude/settings.json let oTerm read exactly when a turn starts, finishes or asks you something. Turning this off removes them and leaves the rest of that file alone.'
         : 'Not set up. Detection falls back to reading the terminal, which is what every other tool gets. Turning this on adds four entries to ~/.claude/settings.json.';
     })
     .catch((err) => {
