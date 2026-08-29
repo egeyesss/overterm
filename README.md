@@ -11,13 +11,14 @@ you needing to keep alt+tab-ing to check if the task is finished.
 
 > macOS 11 or newer. Free and open source, MIT licensed.
 
-## Install
+## Install / Update
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh | sh
 ```
 
-That's all. It puts `oTerm.app` in your Applications folder, 
+That's all. You can run that line to install or update the outdated oTerm you already have.
+It puts `oTerm.app` in your Applications folder, 
 and you can open it from Spotlight or Finder like any other app.
 After that, you can open it by the small terminal icon in the menu bar. 
 You can show/hide the terminal with `Cmd+Shift+O` after that.
