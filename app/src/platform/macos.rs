@@ -324,3 +324,32 @@ pub fn is_on_active_space<R: Runtime>(window: &WebviewWindow<R>) -> bool {
         Err(_) => true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_process_reports_its_own_working_directory() {
+        // Asking the kernel about this very process is the one case where
+        // the right answer is already known, so it is what proves the FFI
+        // reads the struct correctly rather than merely compiling.
+        let expected = std::env::current_dir().expect("the test has a working directory");
+        let pid = std::process::id() as i32;
+
+        let got = process_cwd(pid).expect("a live process has a working directory");
+
+        assert_eq!(
+            std::path::Path::new(&got).canonicalize().unwrap(),
+            expected.canonicalize().unwrap(),
+            "asked for {pid}, got {got}"
+        );
+    }
+
+    #[test]
+    fn a_pid_that_is_not_running_reports_nothing() {
+        // Nothing shown beats something wrong, so a lookup that cannot be
+        // answered has to come back empty rather than with a stale path.
+        assert_eq!(process_cwd(-1), None);
+    }
+}
