@@ -28,6 +28,23 @@ pub const MAX_OPACITY: u8 = 100;
 /// The summon chord a fresh install gets.
 pub const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Shift+O";
 
+/// How many one-time fixes have been written for the settings file.
+///
+/// Bumped whenever a stored value has to be corrected for people who
+/// already have a file, which a changed default cannot do on its own:
+/// saving writes every field, so the old default is already sitting in
+/// everybody's config as though they had chosen it.
+pub const SETTINGS_VERSION: u32 = 1;
+
+/// What a file written before the version field existed reads as.
+///
+/// The struct carries `serde(default)`, so without this a missing key
+/// would take the value from `Settings::default()`, which is the current
+/// version. Every old file would claim to be migrated already.
+fn unversioned() -> u32 {
+    0
+}
+
 // Not Copy: the terminal font is a String. Everything is cloned or moved
 // explicitly instead, which is no hardship for a struct read once a save.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +78,13 @@ pub struct Settings {
 
     /// Which theme to draw, or to follow the machine's own setting.
     pub theme: Theme,
+
+    /// Which one-time fixes have already been applied to this file.
+    ///
+    /// Backend state rather than a preference: the UI never sends it and
+    /// `save_settings` stamps the current value on the way out.
+    #[serde(default = "unversioned")]
+    pub settings_version: u32,
 
     /// Whether the app appears in the Dock and the app switcher.
     ///
@@ -288,6 +312,7 @@ impl Default for Settings {
             opacity: MAX_OPACITY,
             hotkey: DEFAULT_HOTKEY.into(),
             theme: Theme::default(),
+            settings_version: SETTINGS_VERSION,
             show_in_dock: false,
             window: WindowSettings::default(),
             cues: CueSettings::default(),
@@ -445,6 +470,24 @@ impl Settings {
         }
     }
 
+    /// Correct stored values that an older build got wrong.
+    ///
+    /// Changing a default only reaches new installs. Saving writes every
+    /// field, so anybody who ran the older build has the old default in
+    /// their file already and would never see the fix.
+    fn apply_migrations(&mut self) {
+        // 1.0.0 shipped show_in_dock on. A Dock icon makes this a regular
+        // app, which gets a Space of its own and so cannot be drawn over
+        // another app's full-screen space, and the overlay quietly
+        // stopped working. Nobody chose that value, so it is taken back.
+        // Anybody who turns it on after this has version 1 in their file
+        // and keeps their choice.
+        if self.settings_version < 1 {
+            self.show_in_dock = false;
+        }
+        self.settings_version = SETTINGS_VERSION;
+    }
+
     pub fn choreo(&self) -> ChoreoConfig {
         ChoreoConfig {
             collapse_on_submit: self.window.collapse_on_submit,
@@ -582,6 +625,7 @@ pub fn load_from(path: &Path) -> Settings {
     match toml::from_str::<Settings>(&text) {
         Ok(mut settings) => {
             settings.retire_superseded_defaults();
+            settings.apply_migrations();
             settings
         }
         Err(e) => {
@@ -768,6 +812,11 @@ pub fn save_settings<R: Runtime>(
         // Changing this has to register with the OS and can fail, so it
         // goes through set_hotkey and never through a bulk save.
         hotkey: stored.hotkey,
+        // Stamped here rather than taken from the frontend. A save that
+        // arrived without it would deserialise as unversioned and the
+        // migration would run again on the next launch, undoing the Dock
+        // icon somebody had just turned on.
+        settings_version: SETTINGS_VERSION,
         ..settings
     };
 
@@ -827,6 +876,7 @@ mod tests {
             hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
             theme: Theme::Light,
+            settings_version: SETTINGS_VERSION,
             show_in_dock: true,
             window: WindowSettings {
                 collapse_on_submit: false,
@@ -1210,6 +1260,50 @@ mod tests {
             crate::platform::Presence::from_dock_preference(Settings::default().show_in_dock),
             crate::platform::Presence::Overlay,
         );
+    }
+
+    #[test]
+    fn a_file_from_before_the_version_field_reads_as_unversioned() {
+        // The whole migration hangs off this. If a missing key took the
+        // current version from the struct default instead, every old file
+        // would claim to be migrated and nobody would get the fix.
+        let path = scratch("unversioned-file");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "opacity = 85\nshow_in_dock = true\n").unwrap();
+
+        let raw: Settings = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(raw.settings_version, 0);
+    }
+
+    #[test]
+    fn the_dock_icon_that_1_0_0_turned_on_is_taken_back() {
+        // 1.0.0 defaulted show_in_dock on, which made this a regular app
+        // and stopped the window appearing over full-screen apps. Nobody
+        // chose it, so loading an old file gives it back.
+        let path = scratch("dock-migration");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "opacity = 85\nshow_in_dock = true\n").unwrap();
+
+        let migrated = load_from(&path);
+
+        assert!(!migrated.show_in_dock);
+        assert_eq!(migrated.settings_version, SETTINGS_VERSION);
+    }
+
+    #[test]
+    fn a_dock_icon_somebody_asked_for_is_left_alone() {
+        // The other half, and the one that makes this a migration rather
+        // than an override: once the file says version 1 the choice is
+        // the user's and every later load has to respect it.
+        let path = scratch("dock-migration-respects-choice");
+        let chosen = Settings {
+            show_in_dock: true,
+            ..Default::default()
+        };
+        save_to(&path, &chosen).unwrap();
+
+        assert!(load_from(&path).show_in_dock);
     }
 
     #[test]

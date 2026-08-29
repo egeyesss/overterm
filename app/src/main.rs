@@ -252,3 +252,19 @@ fn toggle_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
         eprintln!("[hotkey] toggle failed: {e}");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// The menu bar icon is compiled in, so a bad file is a runtime log
+    /// line nobody reads and an app with nothing to click. Decoding it
+    /// here turns that into a failing build instead.
+    #[test]
+    fn the_menu_bar_icon_decodes() {
+        let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/menubar.png"))
+            .expect("menubar.png is a PNG this build can read");
+
+        // 22 points at 2x. A template image is tinted by macOS, so the
+        // size is the only thing worth asserting.
+        assert_eq!((icon.width(), icon.height()), (44, 44));
+    }
+}
