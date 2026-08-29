@@ -19,8 +19,15 @@ curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh |
 ```
 
 That is the whole install. It puts `oTerm.app` in your Applications
-folder, and you open it from the Dock, Spotlight or Finder like anything
-else. `Cmd+Shift+O` brings it up from any app after that.
+folder, and you open it from Spotlight or Finder like anything else.
+After that it lives in the menu bar: click the icon to summon or hide it,
+or press `Cmd+Shift+O` from any app.
+
+There is no Dock icon by default, and that is deliberate. macOS gives an
+app with a Dock icon a desktop of its own and switches you to it, which
+would stop the window appearing over a full-screen video. You can turn
+the Dock icon on in settings if you would rather have it, and the menu
+bar icon stays either way.
 
 Piping a script into a shell is a lot to ask of anybody, so read it first
 if you would rather:

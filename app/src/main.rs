@@ -8,6 +8,8 @@ mod pty;
 mod settings;
 
 use tauri::Manager;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
 use choreograph::Choreographer;
@@ -64,8 +66,12 @@ fn main() {
         )
         .setup(move |app| {
             // Before the window is shown, since it decides whether this
-            // app owns a Space of its own.
-            platform::set_dock_visible(app.handle(), settings::load().show_in_dock);
+            // app owns a Space of its own, and so whether the overlay
+            // set up below can be drawn over a full-screen app at all.
+            platform::set_presence(
+                app.handle(),
+                platform::Presence::from_dock_preference(settings::load().show_in_dock),
+            );
             let window = app
                 .get_webview_window(MAIN_WINDOW)
                 .expect("main window is defined in tauri.conf.json");
@@ -88,6 +94,9 @@ fn main() {
                     .register(toggle)
             {
                 eprintln!("[hotkey] could not register the toggle shortcut: {e}");
+            }
+            if let Err(e) = menu_bar_item(app.handle()) {
+                eprintln!("[tray] could not put an item in the menu bar: {e}");
             }
             // Somebody dragging a window edge is choosing a size, so it
             // is kept. macOS sends a great many of these during one drag,
@@ -152,12 +161,64 @@ fn panel_resized(app: &tauri::AppHandle, size: tauri::PhysicalSize<u32>) {
     });
 }
 
+/// Put an item in the menu bar.
+///
+/// Without a Dock icon this is the only thing left to click, so it is
+/// what the app has instead of one: left click summons or hides the
+/// window, and the menu behind it is somewhere to quit from. It is built
+/// whichever presence is in force, because a menu bar item is useful next
+/// to a Dock icon and confusing only by its absence.
+///
+/// The icon is a template image, so macOS tints it for a light or dark
+/// menu bar rather than us shipping two.
+fn menu_bar_item(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "Show oTerm", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit oTerm", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit])?;
+
+    TrayIconBuilder::with_id("main")
+        .icon(tauri::image::Image::from_bytes(include_bytes!(
+            "../icons/menubar.png"
+        ))?)
+        .icon_as_template(true)
+        .tooltip("oTerm")
+        .menu(&menu)
+        // Otherwise the left click opens the menu and there is no way to
+        // summon the window with the mouse at all.
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                    toggle_window(&window);
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Down and up both arrive; acting on one of them keeps a
+            // single click from toggling twice.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+                && let Some(window) = tray.app_handle().get_webview_window(MAIN_WINDOW)
+            {
+                toggle_window(&window);
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 /// Quit, from the close button.
 ///
-/// A real exit rather than closing the window: this app has no Dock icon
-/// to bring it back from, so a hidden window with the process still
-/// running would look exactly like having quit while still holding the
-/// summon shortcut.
+/// A real exit rather than closing the window. By default there is no
+/// Dock icon to bring it back from, so a hidden window with the process
+/// still running would look exactly like having quit while still holding
+/// the summon shortcut. The menu bar item is the way back to a window
+/// that is merely hidden.
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
@@ -189,5 +250,21 @@ fn toggle_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     };
     if let Err(e) = result {
         eprintln!("[hotkey] toggle failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The menu bar icon is compiled in, so a bad file is a runtime log
+    /// line nobody reads and an app with nothing to click. Decoding it
+    /// here turns that into a failing build instead.
+    #[test]
+    fn the_menu_bar_icon_decodes() {
+        let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/menubar.png"))
+            .expect("menubar.png is a PNG this build can read");
+
+        // 22 points at 2x. A template image is tinted by macOS, so the
+        // size is the only thing worth asserting.
+        assert_eq!((icon.width(), icon.height()), (44, 44));
     }
 }

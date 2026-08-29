@@ -24,6 +24,8 @@
 use objc2_app_kit::{NSApplication, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
 use tauri::{ActivationPolicy, AppHandle, Runtime, WebviewWindow};
 
+use super::Presence;
+
 /// Borrow the window's AppKit object.
 ///
 /// # Safety
@@ -244,6 +246,12 @@ pub fn stay_visible_when_inactive<R: Runtime>(window: &WebviewWindow<R>) -> Resu
     })
 }
 
+/// Put the window on every Space, including another application's
+/// full-screen one.
+///
+/// Only half of that. `CanJoinAllApplications` below is honoured for an
+/// accessory application, so this needs `Presence::Overlay` to have been
+/// applied as well; see `set_presence`.
 pub fn join_all_spaces<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     with_window(window, "join all spaces", |ns| {
         ns.setCollectionBehavior(
@@ -252,17 +260,18 @@ pub fn join_all_spaces<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), Stri
             NSWindowCollectionBehavior::CanJoinAllSpaces
                 | NSWindowCollectionBehavior::Stationary
                 | NSWindowCollectionBehavior::FullScreenAuxiliary
-                // These two are the ones that matter for sitting over
-                // somebody else's full-screen app, and they are easy to
-                // miss because every older answer names the three above.
-                // CanJoinAllSpaces puts the window on every ordinary
-                // Space and stops at a full-screen one, which measured as
-                // isOnActiveSpace being false the whole time a video was
-                // playing. Auxiliary plus CanJoinAllApplications is what
-                // lets a window join a Space another application owns.
-                // Both arrived in macOS 13; on anything older they are
-                // inert bits and the window behaves as it did before.
-                | NSWindowCollectionBehavior::Auxiliary
+                // Asks to be allowed onto a Space another application
+                // owns, which is the one flag here that is about
+                // full-screen at all: CanJoinAllSpaces covers every
+                // ordinary Space and stops at a full-screen one. It
+                // arrived in macOS 13, so on anything older it is an
+                // inert bit and the window behaves as it did before.
+                //
+                // Auxiliary used to be set alongside it. Apple documents
+                // Primary, Auxiliary and CanJoinAllApplications as one
+                // group with at most one member, so setting two of them
+                // asked for something undefined. Overlay is what this
+                // window is, so it is the one that stays.
                 | NSWindowCollectionBehavior::CanJoinAllApplications,
         );
     })
@@ -301,24 +310,25 @@ pub fn report_state<R: Runtime>(
     })
 }
 
-/// Whether the app appears in the Dock and the app switcher.
+/// Apply the activation policy for `presence`.
 ///
-/// The two policies are a real trade rather than a preference. As a
-/// regular app it has a Dock icon, a Cmd+Tab entry and somewhere to drop
-/// files, which is what a terminal somebody uses all day should be. As an
-/// accessory it has none of those, and in exchange clicking its window
-/// does not make it the frontmost application, so the menu bar of
-/// whatever you were in stays where it was. That is what a
-/// hotkey-summoned overlay wants and how comparable tools ship.
+/// Regular for the Dock, accessory for the overlay. The accessory policy
+/// is what lets `join_all_spaces` above have any effect over a
+/// full-screen app: a regular application owns a Space, and macOS takes
+/// the user to that Space rather than drawing the window onto the one in
+/// front, whatever the window level and the collection behaviour say.
+/// An accessory application owns no Space, so its windows land on
+/// whatever is already there.
 ///
-/// Neither is what makes the window float over another application's
-/// full-screen space; the collection behaviour above does that. So this
-/// can be changed freely without disturbing the overlay behaviour.
-pub fn set_dock_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
-    let policy = if visible {
-        ActivationPolicy::Regular
-    } else {
-        ActivationPolicy::Accessory
+/// This was gone for a release. The two halves were split across two
+/// functions with only a comment holding them together, the comment was
+/// rewritten to say the policy was innocent, and the Dock icon took the
+/// overlay with it. `Presence` exists so the trade is named at the call
+/// site instead.
+pub fn set_presence<R: Runtime>(app: &AppHandle<R>, presence: Presence) {
+    let policy = match presence {
+        Presence::Docked => ActivationPolicy::Regular,
+        Presence::Overlay => ActivationPolicy::Accessory,
     };
     if let Err(e) = app.set_activation_policy(policy) {
         eprintln!("[platform] could not set the activation policy: {e}");

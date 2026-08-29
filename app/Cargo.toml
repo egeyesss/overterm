@@ -11,7 +11,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 overterm-core = { path = "../crates/core" }
-tauri = { version = "2", features = [] }
+# tray-icon for the menu bar item. Without a Dock icon it is the only
+# place to click the app, so it is not optional on macOS.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 # Already in the lock. The settings file format is a locked decision.
 toml = "1"
