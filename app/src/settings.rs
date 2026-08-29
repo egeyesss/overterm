@@ -86,16 +86,6 @@ pub struct Settings {
     #[serde(default = "unversioned")]
     pub settings_version: u32,
 
-    /// Whether the app appears in the Dock and the app switcher.
-    ///
-    /// Off by default, and it costs more than a Dock icon either way.
-    /// macOS gives an ordinary application a Space of its own and takes
-    /// the user to it, so turning this on stops the window being drawn
-    /// over another application's full-screen space, which is the thing
-    /// this app is for. The menu bar item is what it has instead of a
-    /// Dock icon. See `platform::Presence`.
-    pub show_in_dock: bool,
-
     // Tables have to come after the plain values above: TOML puts every
     // key before the first section header, so a scalar declared after a
     // table cannot be written back out.
@@ -313,7 +303,6 @@ impl Default for Settings {
             hotkey: DEFAULT_HOTKEY.into(),
             theme: Theme::default(),
             settings_version: SETTINGS_VERSION,
-            show_in_dock: false,
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
@@ -476,15 +465,11 @@ impl Settings {
     /// field, so anybody who ran the older build has the old default in
     /// their file already and would never see the fix.
     fn apply_migrations(&mut self) {
-        // 1.0.0 shipped show_in_dock on. A Dock icon makes this a regular
-        // app, which gets a Space of its own and so cannot be drawn over
-        // another app's full-screen space, and the overlay quietly
-        // stopped working. Nobody chose that value, so it is taken back.
-        // Anybody who turns it on after this has version 1 in their file
-        // and keeps their choice.
-        if self.settings_version < 1 {
-            self.show_in_dock = false;
-        }
+        // Version 1 turned a Dock icon back off for the people 1.0.0 had
+        // given one. There is no setting to fix any more: the field is
+        // gone and an old file's `show_in_dock` key is ignored on the way
+        // in and dropped on the way out. The stamp stays because the next
+        // migration needs a number to compare against.
         self.settings_version = SETTINGS_VERSION;
     }
 
@@ -813,9 +798,8 @@ pub fn save_settings<R: Runtime>(
         // goes through set_hotkey and never through a bulk save.
         hotkey: stored.hotkey,
         // Stamped here rather than taken from the frontend. A save that
-        // arrived without it would deserialise as unversioned and the
-        // migration would run again on the next launch, undoing the Dock
-        // icon somebody had just turned on.
+        // arrived without it would deserialise as unversioned and every
+        // migration would run again on the next launch.
         settings_version: SETTINGS_VERSION,
         ..settings
     };
@@ -825,12 +809,6 @@ pub fn save_settings<R: Runtime>(
     choreo.set_config(next.choreo());
     if next.opacity != stored.opacity {
         window.set_opacity(next.alpha())?;
-    }
-    if next.show_in_dock != stored.show_in_dock {
-        crate::platform::set_presence(
-            window.app_handle(),
-            crate::platform::Presence::from_dock_preference(next.show_in_dock),
-        );
     }
 
     let path = path().ok_or("no home directory to store settings in")?;
@@ -877,7 +855,6 @@ mod tests {
             opacity: 60,
             theme: Theme::Light,
             settings_version: SETTINGS_VERSION,
-            show_in_dock: true,
             window: WindowSettings {
                 collapse_on_submit: false,
                 collapse_delay_ms: 900,
@@ -1250,26 +1227,13 @@ mod tests {
     }
 
     #[test]
-    fn a_new_install_is_an_overlay_rather_than_a_dock_app() {
-        // The Dock icon and sitting over somebody's full-screen video are
-        // the same choice on macOS, and the overlay is what this app is
-        // for. A release shipped with this the other way round and the
-        // window stopped appearing over full-screen apps entirely.
-        assert!(!Settings::default().show_in_dock);
-        assert_eq!(
-            crate::platform::Presence::from_dock_preference(Settings::default().show_in_dock),
-            crate::platform::Presence::Overlay,
-        );
-    }
-
-    #[test]
     fn a_file_from_before_the_version_field_reads_as_unversioned() {
         // The whole migration hangs off this. If a missing key took the
         // current version from the struct default instead, every old file
         // would claim to be migrated and nobody would get the fix.
         let path = scratch("unversioned-file");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "opacity = 85\nshow_in_dock = true\n").unwrap();
+        std::fs::write(&path, "opacity = 85\n").unwrap();
 
         let raw: Settings = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
@@ -1277,52 +1241,25 @@ mod tests {
     }
 
     #[test]
-    fn the_dock_icon_that_1_0_0_turned_on_is_taken_back() {
-        // 1.0.0 defaulted show_in_dock on, which made this a regular app
-        // and stopped the window appearing over full-screen apps. Nobody
-        // chose it, so loading an old file gives it back.
-        let path = scratch("dock-migration");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fn a_stored_dock_icon_cannot_come_back() {
+        // 1.0.0 and 1.0.1 both wrote show_in_dock into everybody's file,
+        // and turning it on cost the overlay: a Dock icon makes this a
+        // regular app, which owns a Space of its own and so is never
+        // drawn over another app's full-screen one. The key is dead now,
+        // so an old file has to load without it and save without it
+        // rather than the app refusing to read the file at all.
+        let path = scratch("stale-dock-key");
         std::fs::write(&path, "opacity = 85\nshow_in_dock = true\n").unwrap();
 
-        let migrated = load_from(&path);
+        let loaded = load_from(&path);
+        assert_eq!(loaded.opacity, 85, "the rest of the file still has to load");
 
-        assert!(!migrated.show_in_dock);
-        assert_eq!(migrated.settings_version, SETTINGS_VERSION);
-    }
-
-    #[test]
-    fn a_dock_icon_somebody_asked_for_is_left_alone() {
-        // The other half, and the one that makes this a migration rather
-        // than an override: once the file says version 1 the choice is
-        // the user's and every later load has to respect it.
-        let path = scratch("dock-migration-respects-choice");
-        let chosen = Settings {
-            show_in_dock: true,
-            ..Default::default()
-        };
-        save_to(&path, &chosen).unwrap();
-
-        assert!(load_from(&path).show_in_dock);
-    }
-
-    #[test]
-    fn the_dock_choice_survives_a_round_trip() {
-        // It sits among the scalars, above the tables. A field written
-        // after a table cannot be serialised at all, so this also catches
-        // it being moved into the wrong half of the struct.
-        //
-        // Stored as the non-default on purpose: a missing key reads back
-        // as the default, so writing that value would pass this test
-        // without the field ever reaching the file.
-        let path = scratch("dock-round-trip");
-        let settings = Settings {
-            show_in_dock: true,
-            ..Default::default()
-        };
-        save_to(&path, &settings).unwrap();
-
-        assert!(load_from(&path).show_in_dock);
+        save_to(&path, &loaded).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("show_in_dock"),
+            "saving has to drop the dead key rather than write it back"
+        );
     }
 
     #[test]

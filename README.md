@@ -23,11 +23,10 @@ folder, and you open it from Spotlight or Finder like anything else.
 After that it lives in the menu bar: click the icon to summon or hide it,
 or press `Cmd+Shift+O` from any app.
 
-There is no Dock icon by default, and that is deliberate. macOS gives an
-app with a Dock icon a desktop of its own and switches you to it, which
-would stop the window appearing over a full-screen video. You can turn
-the Dock icon on in settings if you would rather have it, and the menu
-bar icon stays either way.
+There is no Dock icon, and that is deliberate rather than missing. macOS
+gives an app with a Dock icon a desktop of its own and switches you to
+it, which would stop the window appearing over a full-screen video. The
+menu bar icon is what oTerm has instead.
 
 Piping a script into a shell is a lot to ask of anybody, so read it first
 if you would rather:

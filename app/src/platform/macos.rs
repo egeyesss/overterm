@@ -24,8 +24,6 @@
 use objc2_app_kit::{NSApplication, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
 use tauri::{ActivationPolicy, AppHandle, Runtime, WebviewWindow};
 
-use super::Presence;
-
 /// Borrow the window's AppKit object.
 ///
 /// # Safety
@@ -250,8 +248,8 @@ pub fn stay_visible_when_inactive<R: Runtime>(window: &WebviewWindow<R>) -> Resu
 /// full-screen one.
 ///
 /// Only half of that. `CanJoinAllApplications` below is honoured for an
-/// accessory application, so this needs `Presence::Overlay` to have been
-/// applied as well; see `set_presence`.
+/// accessory application, so this needs the accessory activation policy
+/// to have been applied as well; see `make_accessory`.
 pub fn join_all_spaces<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     with_window(window, "join all spaces", |ns| {
         ns.setCollectionBehavior(
@@ -310,27 +308,24 @@ pub fn report_state<R: Runtime>(
     })
 }
 
-/// Apply the activation policy for `presence`.
+/// Ask for the accessory activation policy: no Dock icon, no app
+/// switcher entry, no Space of its own.
 ///
-/// Regular for the Dock, accessory for the overlay. The accessory policy
-/// is what lets `join_all_spaces` above have any effect over a
-/// full-screen app: a regular application owns a Space, and macOS takes
-/// the user to that Space rather than drawing the window onto the one in
-/// front, whatever the window level and the collection behaviour say.
-/// An accessory application owns no Space, so its windows land on
-/// whatever is already there.
+/// The accessory policy is what lets `join_all_spaces` above have any
+/// effect over a full-screen app: a regular application owns a Space, and
+/// macOS takes the user to that Space rather than drawing the window onto
+/// the one in front, whatever the window level and the collection
+/// behaviour say. An accessory application owns no Space, so its windows
+/// land on whatever is already there.
 ///
-/// This was gone for a release. The two halves were split across two
-/// functions with only a comment holding them together, the comment was
-/// rewritten to say the policy was innocent, and the Dock icon took the
-/// overlay with it. `Presence` exists so the trade is named at the call
-/// site instead.
-pub fn set_presence<R: Runtime>(app: &AppHandle<R>, presence: Presence) {
-    let policy = match presence {
-        Presence::Docked => ActivationPolicy::Regular,
-        Presence::Overlay => ActivationPolicy::Accessory,
-    };
-    if let Err(e) = app.set_activation_policy(policy) {
+/// This was gone for a release, twice. First the two halves were split
+/// across two functions with only a comment holding them together and the
+/// comment was rewritten to say the policy was innocent. Then it came
+/// back as a settings checkbox, which is the same bug with a person
+/// pulling the trigger: anybody who ticked it lost the overlay and had no
+/// way to know why. There is no argument here on purpose.
+pub fn make_accessory<R: Runtime>(app: &AppHandle<R>) {
+    if let Err(e) = app.set_activation_policy(ActivationPolicy::Accessory) {
         eprintln!("[platform] could not set the activation policy: {e}");
     }
 }

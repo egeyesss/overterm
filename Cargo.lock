@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "overterm"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "libc",
  "objc2",
@@ -2524,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "overterm-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "portable-pty",

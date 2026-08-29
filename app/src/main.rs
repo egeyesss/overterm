@@ -68,10 +68,7 @@ fn main() {
             // Before the window is shown, since it decides whether this
             // app owns a Space of its own, and so whether the overlay
             // set up below can be drawn over a full-screen app at all.
-            platform::set_presence(
-                app.handle(),
-                platform::Presence::from_dock_preference(settings::load().show_in_dock),
-            );
+            platform::make_accessory(app.handle());
             let window = app
                 .get_webview_window(MAIN_WINDOW)
                 .expect("main window is defined in tauri.conf.json");

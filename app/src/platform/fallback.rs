@@ -7,8 +7,6 @@
 
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
-use super::Presence;
-
 pub fn set_floating<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     window.set_always_on_top(true).map_err(|e| e.to_string())
 }
@@ -74,7 +72,7 @@ pub fn process_cwd(_pid: i32) -> Option<String> {
 /// and most Linux desktops read a window type hint. Doing nothing leaves
 /// the app in whatever the desktop shows by default, which is the safe
 /// failure: visible and ordinary.
-pub fn set_presence<R: Runtime>(_app: &AppHandle<R>, _presence: Presence) {}
+pub fn make_accessory<R: Runtime>(_app: &AppHandle<R>) {}
 
 /// Spaces are a macOS idea, so the window is always where the user is.
 pub fn is_on_active_space<R: Runtime>(_window: &WebviewWindow<R>) -> bool {

@@ -99,45 +99,27 @@ pub fn process_cwd(pid: i32) -> Option<String> {
     imp::process_cwd(pid)
 }
 
-/// How the app presents itself to the operating system.
+/// Take the app out of the Dock and the app switcher.
 ///
-/// One choice with two halves, which is why it is this rather than a
-/// `show_in_dock` boolean: on macOS the Dock icon and the ability to sit
-/// over another application's full-screen space are the same decision,
-/// and naming it that way is what stops the two being changed apart.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Presence {
-    /// An ordinary application: a Dock icon, an app switcher entry and
-    /// somewhere to drop a file. It owns a Space of its own, so its
-    /// windows are not drawn over another application's full-screen one.
-    Docked,
-    /// No Dock icon and no Space of its own, so the window is drawn onto
-    /// whatever Space is in front, a full-screen video included. Clicking
-    /// it also leaves the menu bar with whatever app you were using.
-    Overlay,
-}
-
-impl Presence {
-    /// What a stored `show_in_dock` means.
-    pub fn from_dock_preference(show_in_dock: bool) -> Self {
-        if show_in_dock {
-            Self::Docked
-        } else {
-            Self::Overlay
-        }
-    }
-}
-
-/// Apply `presence`. A property of the application rather than of any
-/// window, so it takes the app handle.
-pub fn set_presence<R: Runtime>(app: &AppHandle<R>, presence: Presence) {
-    imp::set_presence(app, presence);
+/// The application half of the overlay, and not a preference. On macOS
+/// the Dock icon and the ability to sit over another application's
+/// full-screen space are the same decision: an app with an icon owns a
+/// Space of its own and macOS takes the user to it instead of drawing the
+/// window onto the Space in front. A build that offered this as a setting
+/// was a build whose overlay could be switched off by accident, so it is
+/// not offered. The menu bar item is what the app has instead of an icon.
+///
+/// A property of the application rather than of any window, so it takes
+/// the app handle. Call it before the window is shown, and pair it with
+/// `make_overlay`: neither half works on its own.
+pub fn make_accessory<R: Runtime>(app: &AppHandle<R>) {
+    imp::make_accessory(app);
 }
 
 /// Apply the window half of the overlay treatment. Call once during
 /// setup, on the main thread.
 ///
-/// The other half is `Presence::Overlay`, which is an application
+/// The other half is `make_accessory` above, which is an application
 /// property and so is set separately. Sitting over another application's
 /// full-screen space needs both.
 pub fn make_overlay<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
