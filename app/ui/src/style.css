@@ -750,3 +750,14 @@ body.mode-bar #first-run {
 body.mode-bar #bar {
   display: flex;
 }
+
+/* The theme toggle shows the theme you would switch to. Same hit area as
+   the other chrome buttons so the cluster stays even. */
+.theme-glyph {
+  font: 400 13px/1 var(--mono);
+  color: var(--ink-3);
+}
+
+.icon.theme-toggle:hover .theme-glyph {
+  color: var(--ink);
+}

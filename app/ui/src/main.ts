@@ -32,6 +32,7 @@ type PtyEvent =
     };
 
 type Cues = { glow: boolean; sound: boolean };
+type Theme = 'light' | 'dark' | 'system';
 
 /// Mirrors the Rust struct, so the keys are snake_case the whole way
 /// through: what the interface shows and what somebody reads in
@@ -41,6 +42,7 @@ type Settings = {
   claude_hooks_notice_seen: boolean;
   opacity: number;
   hotkey: string;
+  theme: Theme;
   window: {
     collapse_on_submit: boolean;
     collapse_delay_ms: number;
@@ -476,8 +478,74 @@ const scrollback = field<HTMLInputElement>('scrollback');
 const opacity = field<HTMLInputElement>('opacity');
 const opacityValue = field<HTMLElement>('opacity-value');
 
+const themeButtons = document.querySelectorAll<HTMLButtonElement>('.theme-toggle');
+const systemIsDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+/// Which theme is actually on screen, which is not the same as the setting:
+/// "system" resolves to whichever the machine is set to.
+function effectiveTheme(choice: Theme): 'light' | 'dark' {
+  if (choice === 'system') return systemIsDark.matches ? 'dark' : 'light';
+  return choice;
+}
+
+/// Put the theme on the page and back into every terminal.
+///
+/// The terminals need doing by hand: xterm reads its colours once when it
+/// is built, so a live session keeps the old palette until it is told
+/// otherwise, and the window ends up half in each theme.
+function applyTheme(choice: Theme) {
+  if (choice === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', choice);
+
+  const shown = effectiveTheme(choice);
+  // The button offers the other one, so it shows where you are going
+  // rather than where you are. A ringed dot rather than a filled one, so
+  // it never reads as the agent glyph.
+  const glyph = shown === 'light' ? '☾' : '☉';
+  for (const button of themeButtons) {
+    button.querySelector('.theme-glyph')!.textContent = glyph;
+    button.title =
+      choice === 'system'
+        ? 'Following the system (click to pick one)'
+        : `Switch to ${shown === 'light' ? 'dark' : 'light'} (right-click to follow the system)`;
+  }
+
+  for (const session of sessions) {
+    session.term.options.theme = {
+      background: token('--body'),
+      foreground: token('--ink'),
+      cursor: token('--ink'),
+    };
+  }
+}
+
+/// Following the system means tracking it while it changes.
+systemIsDark.addEventListener('change', () => {
+  if (settings?.theme === 'system') applyTheme('system');
+});
+
+for (const button of themeButtons) {
+  button.addEventListener('click', () => {
+    if (!settings) return;
+    const next: Theme = effectiveTheme(settings.theme) === 'light' ? 'dark' : 'light';
+    settings = { ...settings, theme: next };
+    applyTheme(next);
+    persist(settings);
+  });
+  // The third option is deliberately off the cycle: two clicks should not
+  // be able to land you somewhere you cannot get back from.
+  button.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    if (!settings) return;
+    settings = { ...settings, theme: 'system' };
+    applyTheme('system');
+    persist(settings);
+  });
+}
+
 function showSettings(current: Settings) {
   settings = current;
+  applyTheme(current.theme);
   collapseOnSubmit.checked = current.window.collapse_on_submit;
   collapseDelay.value = String(current.window.collapse_delay_ms);
   expandWhenWanted.checked = current.window.expand_when_wanted;

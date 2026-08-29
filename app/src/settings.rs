@@ -59,6 +59,9 @@ pub struct Settings {
     /// Chord that summons or hides the window from any application.
     pub hotkey: String,
 
+    /// Which theme to draw, or to follow the machine's own setting.
+    pub theme: Theme,
+
     // Tables have to come after the plain values above: TOML puts every
     // key before the first section header, so a scalar declared after a
     // table cannot be written back out.
@@ -71,6 +74,20 @@ pub struct Settings {
     /// so adding one of your own does not silently drop the ones that
     /// ship with the app.
     pub agents: Vec<AgentProfile>,
+}
+
+/// Light, dark, or whatever the machine is set to.
+///
+/// Following the system is the default, because an overlay that sits on
+/// top of everything else looks wrong when it is the only bright thing on
+/// a dark desktop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Light,
+    Dark,
+    #[default]
+    System,
 }
 
 /// What OverTerm knows about one command it might find in a session.
@@ -234,6 +251,7 @@ impl Default for Settings {
             // arrived faded.
             opacity: MAX_OPACITY,
             hotkey: DEFAULT_HOTKEY.into(),
+            theme: Theme::default(),
             window: WindowSettings::default(),
             cues: CueSettings::default(),
             terminal: TerminalSettings::default(),
@@ -661,6 +679,7 @@ mod tests {
             claude_hooks_notice_seen: true,
             hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
+            theme: Theme::Light,
             window: WindowSettings {
                 collapse_on_submit: false,
                 collapse_delay_ms: 900,
