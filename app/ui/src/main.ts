@@ -181,6 +181,7 @@ const barLine = document.getElementById('bar-line')!;
 const barCwd = document.getElementById('bar-cwd')!;
 const barInput = document.getElementById('bar-input') as HTMLInputElement;
 const pills = document.querySelectorAll<HTMLElement>('.pill');
+const elapsedFields = document.querySelectorAll<HTMLElement>('.elapsed');
 
 let mode: WindowMode = 'panel';
 
@@ -218,7 +219,9 @@ function render() {
 
   for (const pill of pills) {
     pill.querySelector('.label')!.textContent = label;
-    pill.querySelector('.elapsed')!.textContent = active ? timings(active) : '';
+  }
+  for (const field of elapsedFields) {
+    field.textContent = active ? timings(active) : '';
   }
   body.classList.remove('state-idle', 'state-busy', 'state-needsInput', 'state-done');
   body.classList.add(`state-${active?.state ?? 'idle'}`);

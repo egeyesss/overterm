@@ -44,6 +44,8 @@
      cover search, so this is a neutral blue that reads on both surfaces. */
   --match: #3D59A1;
 
+  --needs-ring: oklch(0.72 0.16 60 / 0.35);
+  --scrim: rgba(0, 0, 0, 0.28);
   --shadow: 0 14px 44px rgba(0, 0, 0, 0.34), 0 0 0 1px var(--ring);
   --radius-window: 12px;
   --radius-control: 8px;
@@ -83,6 +85,8 @@
   --done-hex: #65C86B;
   --match: #3D59A1;
 
+  --needs-ring: oklch(0.82 0.15 60 / 0.4);
+  --scrim: rgba(0, 0, 0, 0.55);
   --shadow: 0 18px 54px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--ring);
 }
 
@@ -234,9 +238,15 @@ body.attention-needs::after {
   color: var(--ink-3);
   font: 500 11px/1 var(--mono);
   cursor: pointer;
-  /* A name longer than the box is cut off rather than spilling out of
-     it. The whole thing is still in the tooltip. */
+}
+
+/* A name longer than the box is cut off rather than spilling out of it.
+   This is on the label rather than the button, because the status dot is
+   positioned outside the button on purpose and a clip here would take the
+   corner off it. */
+.tab .label {
   overflow: hidden;
+  max-width: 100%;
 }
 
 .tab .label {
@@ -295,6 +305,9 @@ body.attention-needs::after {
 /* Per-tab state, so a session that wants you is visible from the tab
    even while you are looking at a different one. */
 .tab .dot {
+  /* Nothing to report is shown by there being no dot, so an idle tab does
+     not carry an empty ring. */
+  display: none;
   position: absolute;
   top: -3px;
   right: -3px;
@@ -303,6 +316,12 @@ body.attention-needs::after {
   border-radius: 50%;
   border: 2px solid var(--chrome);
   background: transparent;
+}
+
+.tab.state-busy .dot,
+.tab.state-done .dot,
+.tab.state-needsInput .dot {
+  display: block;
 }
 
 .tab.state-busy .dot {
@@ -317,22 +336,20 @@ body.attention-needs::after {
 
 #tab-add {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
+  border: none;
+  border-radius: var(--radius-tile);
   background: none;
-  color: var(--ink-3);
-  font: inherit;
-  font-size: 15px;
-  line-height: 1;
+  color: var(--ink-4);
+  font: 400 15px/1 var(--mono);
   cursor: pointer;
 }
 
 #tab-add:hover {
-  color: var(--ink);
-  border-color: var(--ink-3);
+  color: var(--ink-2);
+  background: var(--body);
 }
 
 #terminals {
@@ -384,8 +401,14 @@ body.attention-needs::after {
   flex: none;
 }
 
-.pill .elapsed {
+.elapsed {
+  font: 400 11px/1 var(--mono);
   color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.elapsed:empty {
+  display: none;
 }
 
 /* One state sets all three: the dot, the label ink and the wash behind
@@ -652,7 +675,7 @@ body.state-busy #bar-bottom .prompt {
   justify-content: center;
   padding: 26px 12px 12px;
   box-sizing: border-box;
-  background: rgba(26, 27, 38, 0.75);
+  background: var(--scrim);
 }
 
 #settings[hidden] {
@@ -832,7 +855,7 @@ body.mode-bar #bar {
 body.state-needsInput {
   box-shadow:
     inset 0 0 0 1px var(--ring),
-    inset 0 0 0 3px var(--needs-pill);
+    inset 0 0 0 3px var(--needs-ring);
 }
 
 /* Where the session is, in the collapsed status line. Cut from the left,
