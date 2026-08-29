@@ -238,7 +238,7 @@ body.attention-needs::after {
   padding: 0;
   border: none;
   border-radius: var(--radius-tile);
-  background: var(--body);
+  background: var(--chrome);
   color: var(--ink-3);
   font: 500 11px/1 var(--mono);
   cursor: pointer;
@@ -351,9 +351,10 @@ body.attention-needs::after {
   cursor: pointer;
 }
 
-#tab-add:hover {
+#tab-add:hover,
+.tab:not(.active):hover {
   color: var(--ink-2);
-  background: var(--body);
+  background: var(--line);
 }
 
 #terminals {
@@ -495,8 +496,11 @@ body.state-busy .pill .dot {
   background: var(--chrome);
 }
 
-/* The status strip: what it is doing, where, and for how long. */
+/* The status strip: what it is doing, where, and for how long. Nothing
+   in it is selectable, so grabbing the path moves the window rather than
+   highlighting the text. */
 #bar-top {
+  user-select: none;
   flex: none;
   height: 34px;
   display: flex;
@@ -515,7 +519,7 @@ body.state-busy .pill .dot {
   display: flex;
   align-items: center;
   min-width: 0;
-  background: var(--body);
+  background: var(--chrome);
 }
 
 /* Where the session is. Given the middle of the row, so it yields space to
