@@ -114,7 +114,7 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: settings?.terminal.font_size ?? DEFAULT_FONT_SIZE,
-    fontFamily: settings?.terminal.font_family ?? 'Menlo, Monaco, "SF Mono", monospace',
+    fontFamily: settings?.terminal.font_family ?? "'IBM Plex Mono', Menlo, Monaco, monospace",
     scrollback: settings?.terminal.scrollback ?? 10_000,
     // Required by the Unicode 11 addon below, which registers a character
     // width provider through an API xterm still calls proposed. Without it
@@ -125,9 +125,9 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
     // working at all, and Claude Code's other Option shortcuts.
     macOptionIsMeta: true,
     theme: {
-      background: token('--bg'),
-      foreground: token('--fg'),
-      cursor: token('--fg'),
+      background: token('--body'),
+      foreground: token('--ink'),
+      cursor: token('--ink'),
     },
   });
 
@@ -379,7 +379,7 @@ const findCount = document.getElementById('find-count')!;
 // custom property before the stylesheet is applied returns nothing.
 function findDecorations() {
   const match = token('--match');
-  const active = token('--busy');
+  const active = token('--needs-hex');
   return {
     matchBackground: match,
     matchBorder: match,

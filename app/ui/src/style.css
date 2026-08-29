@@ -1,24 +1,134 @@
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+/* The palette, and the only copy of it. The terminal is drawn by xterm and
+   everything around it by CSS, so both read these back rather than keeping
+   their own. Light is the base and dark redefines the same names.
+
+   Status colours are written twice, once as oklch for CSS and once as hex
+   for xterm, which parses colours itself and does not understand oklch.
+   The hex values are those oklch values converted, so they are the same
+   colour and not a second opinion about it. */
 :root {
-  --bg: #1a1b26;
-  --fg: #c0caf5;
-  --dim: #565f89;
-  --line: #2f3349;
-  --busy: #e0af68;
-  --done: #9ece6a;
-  --needs: #f7768e;
-  /* Search hits. Painted by xterm onto the canvas rather than by CSS,
-     but it is the same palette, so it lives with the rest of it. */
-  --match: #3d59a1;
+  color-scheme: light;
+
+  /* Surfaces. Chrome reads brighter than the transcript in both themes. */
+  --chrome: #FFFFFF;
+  --body: #F5F5F7;
+  --line: rgba(0, 0, 0, 0.07);
+  --ring: rgba(0, 0, 0, 0.08);
+
+  /* Ink, in four steps from the title down to a hint. */
+  --ink: #111111;
+  --ink-2: rgba(0, 0, 0, 0.6);
+  --ink-3: rgba(0, 0, 0, 0.42);
+  --ink-4: rgba(0, 0, 0, 0.28);
+
+  /* Status. The dot, the label on the pill, and the pill behind it. */
+  --busy: oklch(0.6 0.19 25);
+  --busy-ink: oklch(0.55 0.19 25);
+  --busy-pill: oklch(0.6 0.19 25 / 0.1);
+  --needs: oklch(0.72 0.16 60);
+  --needs-ink: oklch(0.5 0.13 60);
+  --needs-pill: oklch(0.72 0.16 60 / 0.14);
+  --done: oklch(0.6 0.16 145);
+  --done-ink: oklch(0.5 0.13 145);
+  --done-pill: oklch(0.62 0.16 145 / 0.12);
+
+  /* Handed to xterm, so hex only. */
+  --busy-hex: #DB4241;
+  --needs-hex: #EB881F;
+  --done-hex: #31983D;
+  /* Search hits, painted onto the canvas by the addon. The design does not
+     cover search, so this is a neutral blue that reads on both surfaces. */
+  --match: #3D59A1;
+
+  --shadow: 0 14px 44px rgba(0, 0, 0, 0.34), 0 0 0 1px var(--ring);
+  --radius-window: 12px;
+  --radius-control: 8px;
+  --radius-tile: 9px;
+
+  --mono: 'IBM Plex Mono', Menlo, Monaco, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+}
+
+/* Dark is the light pair flipped: chrome stays the brighter of the two.
+   The status hues are the same, lifted so they hold contrast on #101012. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --chrome: #1C1C1E;
+  --body: #101012;
+  --line: rgba(255, 255, 255, 0.08);
+  --ring: rgba(255, 255, 255, 0.11);
+
+  --ink: #FFFFFF;
+  --ink-2: rgba(255, 255, 255, 0.6);
+  --ink-3: rgba(255, 255, 255, 0.45);
+  --ink-4: rgba(255, 255, 255, 0.32);
+
+  --busy: oklch(0.68 0.19 25);
+  --busy-ink: oklch(0.78 0.14 25);
+  --busy-pill: oklch(0.68 0.19 25 / 0.16);
+  --needs: oklch(0.82 0.15 60);
+  --needs-ink: oklch(0.88 0.12 60);
+  --needs-pill: oklch(0.82 0.15 60 / 0.16);
+  --done: oklch(0.75 0.16 145);
+  --done-ink: oklch(0.82 0.13 145);
+  --done-pill: oklch(0.75 0.16 145 / 0.16);
+
+  --busy-hex: #F75D59;
+  --needs-hex: #FFAB55;
+  --done-hex: #65C86B;
+  --match: #3D59A1;
+
+  --shadow: 0 18px 54px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--ring);
+}
+
+/* No data-theme attribute means follow the system. Guarded so that
+   choosing light explicitly still wins over a dark system setting. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --chrome: #1C1C1E;
+    --body: #101012;
+    --line: rgba(255, 255, 255, 0.08);
+    --ring: rgba(255, 255, 255, 0.11);
+
+    --ink: #FFFFFF;
+    --ink-2: rgba(255, 255, 255, 0.6);
+    --ink-3: rgba(255, 255, 255, 0.45);
+    --ink-4: rgba(255, 255, 255, 0.32);
+
+    --busy: oklch(0.68 0.19 25);
+    --busy-ink: oklch(0.78 0.14 25);
+    --busy-pill: oklch(0.68 0.19 25 / 0.16);
+    --needs: oklch(0.82 0.15 60);
+    --needs-ink: oklch(0.88 0.12 60);
+    --needs-pill: oklch(0.82 0.15 60 / 0.16);
+    --done: oklch(0.75 0.16 145);
+    --done-ink: oklch(0.82 0.13 145);
+    --done-pill: oklch(0.75 0.16 145 / 0.16);
+
+    --busy-hex: #F75D59;
+    --needs-hex: #FFAB55;
+    --done-hex: #65C86B;
+    --match: #3D59A1;
+
+    --shadow: 0 18px 54px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--ring);
+  }
 }
 
 html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--chrome);
   overflow: hidden;
-  font-family: Menlo, Monaco, 'SF Mono', monospace;
-  color: var(--fg);
+  font-family: var(--mono);
+  color: var(--ink);
 }
 
 body {
@@ -37,7 +147,7 @@ body {
   padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--line);
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
   user-select: none;
 }
 
@@ -111,7 +221,7 @@ body.attention-needs::after {
   border: 1px solid transparent;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
-  color: var(--dim);
+  color: var(--ink-3);
   font: inherit;
   font-size: 10px;
   cursor: pointer;
@@ -166,12 +276,12 @@ body.attention-needs::after {
 }
 
 .tab:hover {
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .tab.active {
   border-color: var(--busy);
-  color: var(--fg);
+  color: var(--ink);
 }
 
 /* Per-tab state, so a session that wants you is visible from the tab
@@ -183,7 +293,7 @@ body.attention-needs::after {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 2px solid var(--bg);
+  border: 2px solid var(--chrome);
   background: transparent;
 }
 
@@ -205,7 +315,7 @@ body.attention-needs::after {
   border: 1px dashed var(--line);
   border-radius: 8px;
   background: none;
-  color: var(--dim);
+  color: var(--ink-3);
   font: inherit;
   font-size: 15px;
   line-height: 1;
@@ -213,11 +323,12 @@ body.attention-needs::after {
 }
 
 #tab-add:hover {
-  color: var(--fg);
-  border-color: var(--dim);
+  color: var(--ink);
+  border-color: var(--ink-3);
 }
 
 #terminals {
+  background: var(--body);
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -254,7 +365,7 @@ body.attention-needs::after {
   border: 1px solid var(--line);
   font: inherit;
   font-size: 11px;
-  color: var(--fg);
+  color: var(--ink);
   white-space: nowrap;
 }
 
@@ -262,12 +373,12 @@ body.attention-needs::after {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--dim);
+  background: var(--ink-3);
   flex: none;
 }
 
 .pill .elapsed {
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 body.state-busy .pill .dot {
@@ -314,12 +425,12 @@ body.state-busy .pill .dot {
   background: none;
   border: 1px solid transparent;
   border-radius: 5px;
-  color: var(--dim);
+  color: var(--ink-3);
   cursor: pointer;
 }
 
 .icon:hover {
-  color: var(--fg);
+  color: var(--ink);
   border-color: var(--line);
 }
 
@@ -359,7 +470,7 @@ body.state-busy .pill .dot {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 #bar-bottom .prompt {
@@ -374,7 +485,7 @@ body.state-busy .pill .dot {
   background: none;
   border: none;
   outline: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 13px;
 }
@@ -395,7 +506,7 @@ body.state-busy .pill .dot {
   padding: 4px 6px 4px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--chrome);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
@@ -408,7 +519,7 @@ body.state-busy .pill .dot {
   background: none;
   border: none;
   outline: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
 }
@@ -419,7 +530,7 @@ body.state-busy .pill .dot {
 
 #find-count {
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -446,7 +557,7 @@ body.state-busy .pill .dot {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--chrome);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
@@ -459,12 +570,12 @@ body.state-busy .pill .dot {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--fg);
+  color: var(--ink);
 }
 
 #first-run code {
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 #first-run button {
@@ -473,14 +584,14 @@ body.state-busy .pill .dot {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
 }
 
 #first-run button:hover {
-  border-color: var(--dim);
+  border-color: var(--ink-3);
 }
 
 /* Settings sheet. Covers the terminal rather than resizing it, so the
@@ -509,7 +620,7 @@ body.state-busy .pill .dot {
   max-height: 100%;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--bg);
+  background: var(--chrome);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
@@ -522,7 +633,7 @@ body.state-busy .pill .dot {
   padding: 8px 8px 8px 12px;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .sheet-body {
@@ -536,7 +647,7 @@ body.state-busy .pill .dot {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .sheet-body .row {
@@ -545,18 +656,18 @@ body.state-busy .pill .dot {
   gap: 8px;
   padding: 5px 0;
   font-size: 12px;
-  color: var(--fg);
+  color: var(--ink);
   cursor: pointer;
 }
 
 /* A qualifier on the setting above it, so it reads as one sentence. */
 .sheet-body .row.indent {
   padding-left: 22px;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .sheet-body .row .unit {
-  color: var(--dim);
+  color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
 
@@ -566,7 +677,7 @@ body.state-busy .pill .dot {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
 }
@@ -578,7 +689,7 @@ body.state-busy .pill .dot {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: none;
-  color: var(--fg);
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
 }
@@ -604,7 +715,7 @@ body.state-busy .pill .dot {
   margin: 14px 0 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .version {
@@ -612,7 +723,7 @@ body.state-busy .pill .dot {
   padding-top: 12px;
   border-top: 1px solid var(--line);
   font-size: 11px;
-  color: var(--dim);
+  color: var(--ink-3);
 }
 
 .version:empty {

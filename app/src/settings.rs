@@ -153,10 +153,23 @@ pub struct TerminalSettings {
     pub scrollback: u32,
 }
 
+/// The font the design asks for, shipped with the app rather than assumed
+/// to be installed.
+pub const DEFAULT_FONT: &str = "'IBM Plex Mono', Menlo, Monaco, monospace";
+
+/// What the default used to be, before the design.
+///
+/// A settings file written by an older build has this recorded, because
+/// saving writes every field whether or not anybody chose it. Somebody who
+/// picked their own font keeps it; somebody who only ever accepted the
+/// default should get the new one rather than being pinned to a choice they
+/// never made.
+const SUPERSEDED_FONT: &str = "Menlo, Monaco, \"SF Mono\", monospace";
+
 impl Default for TerminalSettings {
     fn default() -> Self {
         Self {
-            font_family: "Menlo, Monaco, \"SF Mono\", monospace".into(),
+            font_family: DEFAULT_FONT.into(),
             font_size: 13,
             scrollback: 10_000,
         }
@@ -362,6 +375,18 @@ impl Settings {
     }
 
     /// The stored preferences as the rules engine wants them.
+    /// Move a setting nobody chose onto its new default.
+    ///
+    /// Saving writes every field, so a file written by an older build
+    /// records the old default as though it were a decision. Only an exact
+    /// match is replaced, which leaves anybody who picked their own font
+    /// alone.
+    fn retire_superseded_defaults(&mut self) {
+        if self.terminal.font_family == SUPERSEDED_FONT {
+            self.terminal.font_family = DEFAULT_FONT.into();
+        }
+    }
+
     pub fn choreo(&self) -> ChoreoConfig {
         ChoreoConfig {
             collapse_on_submit: self.window.collapse_on_submit,
@@ -489,8 +514,11 @@ pub fn load_from(path: &Path) -> Settings {
             return Settings::default();
         }
     };
-    match toml::from_str(&text) {
-        Ok(settings) => settings,
+    match toml::from_str::<Settings>(&text) {
+        Ok(mut settings) => {
+            settings.retire_superseded_defaults();
+            settings
+        }
         Err(e) => {
             eprintln!("[settings] ignoring {}: {e}", path.display());
             Settings::default()
@@ -975,6 +1003,33 @@ mod tests {
             "the stack has to end somewhere safe: {}",
             terminal.font_family
         );
+    }
+
+    #[test]
+    fn a_font_nobody_chose_moves_to_the_new_default() {
+        // Saving writes every field, so the old default sits in every
+        // settings file written before the design landed as though somebody
+        // had picked it. They did not.
+        let path = scratch("superseded-font");
+        std::fs::write(
+            &path,
+            format!("[terminal]\nfont_family = {SUPERSEDED_FONT:?}\n"),
+        )
+        .unwrap();
+
+        let settings = load_from(&path);
+
+        assert_eq!(settings.terminal.font_family, DEFAULT_FONT);
+    }
+
+    #[test]
+    fn a_font_somebody_did_choose_is_left_alone() {
+        let path = scratch("chosen-font");
+        std::fs::write(&path, "[terminal]\nfont_family = \"Fira Code\"\n").unwrap();
+
+        let settings = load_from(&path);
+
+        assert_eq!(settings.terminal.font_family, "Fira Code");
     }
 
     #[test]
