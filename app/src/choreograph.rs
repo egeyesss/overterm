@@ -26,19 +26,15 @@ pub const EVENT_ATTENTION: &str = "overterm://attention";
 
 /// Height of the collapsed bar, in logical pixels.
 ///
-/// One row: a status dot, somewhere to type, and the window buttons.
-/// This has a twin in `tauri.conf.json` as the window's minimum height,
-/// and the two have to move together or the window ends up a different
-/// size from the layout inside it.
-const BAR_HEIGHT: f64 = 44.0;
-/// Width of the collapsed bar. Narrower than the panel on purpose: while
-/// it is out of the way it should read as a widget rather than as the
-/// same window with the middle taken out.
-const BAR_WIDTH: f64 = 460.0;
-/// Height to restore to if the window was never measured while expanded.
-const DEFAULT_PANEL_HEIGHT: f64 = 620.0;
-/// Width to restore to if the window was never measured while expanded.
-const DEFAULT_PANEL_WIDTH: f64 = 660.0;
+/// Two rows: the status strip and somewhere to type. This has a twin in
+/// `tauri.conf.json` as the window's minimum height, and the two have to
+/// move together or the window ends up a different size from the layout
+/// inside it.
+const BAR_HEIGHT: f64 = 68.0;
+/// Width of the collapsed bar. Narrower than the panel on purpose: out of
+/// the way it should take no more room than it needs.
+const BAR_WIDTH: f64 = 520.0;
+
 /// Gap between the two checks that a collapse is safe. Claude repaints its
 /// status area every several seconds while it sits idle, which reads as
 /// activity for a moment; a session that is genuinely working is still
@@ -110,13 +106,13 @@ struct Windowing {
 pub struct Choreographer(Arc<Inner>);
 
 impl Choreographer {
-    pub fn new(cfg: ChoreoConfig) -> Self {
+    pub fn new(cfg: ChoreoConfig, panel_width: f64, panel_height: f64) -> Self {
         Self(Arc::new(Inner {
             cfg: Mutex::new(cfg),
             state: Mutex::new(Windowing {
                 mode: WindowMode::default(),
-                panel_height: DEFAULT_PANEL_HEIGHT,
-                panel_width: DEFAULT_PANEL_WIDTH,
+                panel_height,
+                panel_width,
             }),
             generation: AtomicU64::new(0),
             sessions: Mutex::new(HashMap::new()),
@@ -331,6 +327,39 @@ impl Choreographer {
         }
     }
 
+    /// Record the size the window is at, if it is the expanded one.
+    ///
+    /// Called while somebody drags the window's edge. The bar has a size
+    /// of its own, so a resize in that mode is not a preference and is
+    /// ignored.
+    pub fn remember_panel_size(&self, width: f64, height: f64) -> bool {
+        let mut state = self.0.state.lock().unwrap();
+        if state.mode != WindowMode::Panel {
+            return false;
+        }
+        if state.panel_width == width && state.panel_height == height {
+            return false;
+        }
+        state.panel_width = width;
+        state.panel_height = height;
+        true
+    }
+
+    /// Set the expanded size directly, from the settings sheet.
+    pub fn set_panel_size<R: Runtime>(&self, app: &AppHandle<R>, width: f64, height: f64) {
+        {
+            let mut state = self.0.state.lock().unwrap();
+            state.panel_width = width;
+            state.panel_height = height;
+            if state.mode != WindowMode::Panel {
+                return;
+            }
+        }
+        if let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) {
+            resize_keeping_top(&window, width, height);
+        }
+    }
+
     fn collapse<R: Runtime>(&self, app: &AppHandle<R>) {
         let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) else {
             return;
@@ -348,6 +377,7 @@ impl Choreographer {
             }
             state.mode = WindowMode::Bar;
         }
+        let _ = window.set_resizable(false);
         resize_keeping_top(&window, BAR_WIDTH, BAR_HEIGHT);
         let _ = app.emit(
             EVENT_MODE,
@@ -366,6 +396,7 @@ impl Choreographer {
             state.mode = WindowMode::Panel;
             (state.panel_width, state.panel_height)
         };
+        let _ = window.set_resizable(true);
         resize_keeping_top(&window, width, height);
         if raise {
             // An agent finishing its work must never pull keyboard focus

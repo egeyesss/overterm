@@ -17,12 +17,17 @@
         </span>
         <span class="elapsed"></span>
         <button class="icon theme-toggle" title="Switch theme (right-click to follow the system)">
-          <span class="theme-glyph" aria-hidden="true"></span>
-        </button>
-        <button class="icon settings-open" title="Settings (Cmd+,)">
-          <svg viewBox="0 0 12 12" aria-hidden="true">
+          <svg class="solid glyph-moon" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M7.4,1.5 A4.7,4.7 0 1,0 7.4,10.5 A3.7,3.7 0 1,1 7.4,1.5 Z" />
+          </svg>
+          <svg class="glyph-sun" viewBox="0 0 12 12" aria-hidden="true">
             <circle cx="6" cy="6" r="2" />
             <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M9.5 2.5l-1 1M3.5 8.5l-1 1" />
+          </svg>
+        </button>
+        <button class="icon settings-open" title="Settings (Cmd+,)">
+          <svg class="solid" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M11.35,5.28 L11.35,6.72 L9.61,6.79 L8.87,8.33 L9.90,9.73 L8.77,10.64 L7.64,9.32 L5.97,9.70 L5.52,11.38 L4.10,11.06 L4.42,9.35 L3.09,8.28 L1.49,8.97 L0.86,7.67 L2.40,6.86 L2.40,5.14 L0.86,4.33 L1.49,3.03 L3.09,3.72 L4.42,2.65 L4.10,0.94 L5.52,0.62 L5.97,2.30 L7.64,2.68 L8.77,1.36 L9.90,2.27 L8.87,3.67 L9.61,5.21 Z M7.85,6.00 A1.85,1.85 0 1,0 4.15,6.00 A1.85,1.85 0 1,0 7.85,6.00 Z" />
           </svg>
         </button>
         <button class="icon collapse" title="Collapse to the bar">
@@ -174,6 +179,29 @@
             <span class="unit">lines</span>
           </label>
 
+          <h3>Window size</h3>
+
+          <label class="row">
+            <span>Width</span>
+            <input type="number" id="panel-width" min="400" max="6000" step="10" />
+            <span class="unit">px</span>
+          </label>
+
+          <label class="row">
+            <span>Height</span>
+            <input type="number" id="panel-height" min="200" max="6000" step="10" />
+            <span class="unit">px</span>
+          </label>
+
+          <div class="row presets">
+            <button type="button" class="preset" data-size="small">Small</button>
+            <button type="button" class="preset" data-size="medium">Medium</button>
+            <button type="button" class="preset" data-size="large">Large</button>
+          </div>
+
+          <p class="note">Drag any edge or corner of the window to resize it. Large is half
+            the screen wide and nearly its full height.</p>
+
           <h3>Appearance</h3>
 
           <label class="row">
@@ -190,35 +218,59 @@
     </div>
 
     <!-- Compact strip shown while the agent works. -->
-    <div id="bar" data-tauri-drag-region>
-      <span class="pill" id="bar-pill" title="Detected agent state">
-        <span class="dot"></span>
-        <span class="label">idle</span>
-      </span>
-      <span class="prompt" aria-hidden="true">&#10035;</span>
-      <input
-        id="bar-input"
-        type="text"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="type here to talk to the session"
-      />
-      <span class="elapsed"></span>
-      <div class="controls">
+
+    <!-- A window with no system frame has no resize border of its own, so
+         it draws its own along the edges and corners. -->
+    <div id="grips" aria-hidden="true">
+      <div class="grip n" data-dir="North"></div>
+      <div class="grip s" data-dir="South"></div>
+      <div class="grip w" data-dir="West"></div>
+      <div class="grip e" data-dir="East"></div>
+      <div class="grip nw" data-dir="NorthWest"></div>
+      <div class="grip ne" data-dir="NorthEast"></div>
+      <div class="grip sw" data-dir="SouthWest"></div>
+      <div class="grip se" data-dir="SouthEast"></div>
+    </div>
+    <div id="bar">
+      <div id="bar-top" data-tauri-drag-region>
+        <span class="pill" id="bar-pill" title="Detected agent state">
+          <span class="dot"></span>
+          <span class="label">idle</span>
+        </span>
+        <span id="bar-cwd"></span>
+        <span class="elapsed"></span>
+        <div class="controls">
         <button class="icon theme-toggle" title="Switch theme (right-click to follow the system)">
-          <span class="theme-glyph" aria-hidden="true"></span>
-        </button>
-        <button class="icon expand" title="Show the full terminal">
-          <svg viewBox="0 0 12 12" aria-hidden="true">
-            <path d="M2 9.5h8M6 2.5 3.5 5.5h5z" />
+          <svg class="solid glyph-moon" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M7.4,1.5 A4.7,4.7 0 1,0 7.4,10.5 A3.7,3.7 0 1,1 7.4,1.5 Z" />
+          </svg>
+          <svg class="glyph-sun" viewBox="0 0 12 12" aria-hidden="true">
+            <circle cx="6" cy="6" r="2" />
+            <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M9.5 2.5l-1 1M3.5 8.5l-1 1" />
           </svg>
         </button>
-        <button class="icon hide" title="Hide the window (Cmd+Shift+O brings it back)">
-          <svg viewBox="0 0 12 12" aria-hidden="true">
-            <path d="M2 9.5h8" />
-          </svg>
-        </button>
+          <button class="icon expand" title="Show the full terminal">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2 9.5h8M6 2.5 3.5 5.5h5z" />
+            </svg>
+          </button>
+          <button class="icon hide" title="Hide the window (Cmd+Shift+O brings it back)">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2 9.5h8" />
+            </svg>
+          </button>
+        </div>
       </div>
+      <div id="bar-bottom">
+        <input
+          id="bar-input"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="type here to talk to the session"
+        />
+      </div>
+    </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

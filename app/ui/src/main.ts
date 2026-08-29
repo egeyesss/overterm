@@ -1,4 +1,17 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+
+/// The eight directions a window edge can be dragged in, as the window
+/// API names them. Mirrored here because the type is not exported.
+type ResizeDirection =
+  | 'North'
+  | 'South'
+  | 'East'
+  | 'West'
+  | 'NorthEast'
+  | 'NorthWest'
+  | 'SouthEast'
+  | 'SouthWest';
 import { listen } from '@tauri-apps/api/event';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -48,6 +61,8 @@ type Settings = {
     collapse_delay_ms: number;
     expand_when_wanted: boolean;
     reveal_when_stalled_ms: number;
+    panel_width: number;
+    panel_height: number;
   };
   cues: Cues;
   terminal: {
@@ -179,6 +194,7 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
 const body = document.body;
 const barInput = document.getElementById('bar-input') as HTMLInputElement;
 const pills = document.querySelectorAll<HTMLElement>('.pill');
+const barCwd = document.getElementById('bar-cwd')!;
 const elapsedFields = document.querySelectorAll<HTMLElement>('.elapsed');
 
 let mode: WindowMode = 'panel';
@@ -225,11 +241,7 @@ function render() {
   body.classList.remove('state-idle', 'state-busy', 'state-needsInput', 'state-done');
   body.classList.add(`state-${active?.state ?? 'idle'}`);
 
-  // One row leaves no space for the path, so it is what the status pill
-  // says when you point at it.
-  for (const pill of pills) {
-    pill.title = active?.cwd ? `${label} in ${active.cwd}` : 'Detected agent state';
-  }
+  barCwd.textContent = active?.cwd ?? '';
 }
 setInterval(render, 1000);
 
@@ -433,6 +445,25 @@ findBox.querySelector('.find-next')!.addEventListener('click', () => runFind('ne
 findBox.querySelector('.find-prev')!.addEventListener('click', () => runFind('previous'));
 findBox.querySelector('.find-close')!.addEventListener('click', closeFind);
 
+// A window with no system frame gets no resize border from the window
+// manager, so each edge hands the drag over itself. The direction is on
+// the element rather than worked out from the pointer, which keeps the
+// corners honest.
+for (const grip of document.querySelectorAll<HTMLElement>('.grip')) {
+  grip.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const direction = grip.dataset.dir;
+    if (!direction) return;
+    // Refused rather than crashing if the permission is ever missing, and
+    // said out loud: a resize that silently does nothing is the kind of
+    // thing that survives a whole release.
+    getCurrentWindow()
+      .startResizeDragging(direction as ResizeDirection)
+      .catch((err: unknown) => console.error('[resize] could not start:', err));
+  });
+}
+
 // --- settings --------------------------------------------------------
 
 const settingsSheet = document.getElementById('settings')!;
@@ -493,12 +524,11 @@ function applyTheme(choice: Theme) {
   else document.documentElement.setAttribute('data-theme', choice);
 
   const shown = effectiveTheme(choice);
-  // The button offers the other one, so it shows where you are going
-  // rather than where you are. A ringed dot rather than a filled one, so
-  // it never reads as the agent glyph.
-  const glyph = shown === 'light' ? '☾' : '☉';
+  // The stylesheet picks the glyph off this: the button offers the theme
+  // you are not in, so it shows where you are going rather than where you
+  // are.
+  document.documentElement.dataset.shown = shown;
   for (const button of themeButtons) {
-    button.querySelector('.theme-glyph')!.textContent = glyph;
     button.title =
       choice === 'system'
         ? 'Following the system (click to pick one)'
@@ -538,6 +568,52 @@ for (const button of themeButtons) {
   });
 }
 
+const panelWidth = field<HTMLInputElement>('panel-width');
+const panelHeight = field<HTMLInputElement>('panel-height');
+
+/// Put a size the backend settled on back into the two fields.
+///
+/// It answers with what it applied rather than what was asked for, since
+/// a size below the usable minimum is raised and a preset is worked out
+/// from the screen.
+function showPanelSize(size: { width: number; height: number }) {
+  panelWidth.value = String(size.width);
+  panelHeight.value = String(size.height);
+  if (settings) {
+    settings = {
+      ...settings,
+      window: { ...settings.window, panel_width: size.width, panel_height: size.height },
+    };
+  }
+}
+
+function applyTypedSize() {
+  const width = Number(panelWidth.value);
+  const height = Number(panelHeight.value);
+  if (!width || !height) return;
+  invoke<{ width: number; height: number }>('set_panel_size', { width, height })
+    .then(showPanelSize)
+    .catch((err) => {
+      settingsNote.textContent = `Could not resize: ${err}`;
+      settingsNote.classList.add('failed');
+    });
+}
+
+for (const input of [panelWidth, panelHeight]) {
+  input.addEventListener('change', applyTypedSize);
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>('.preset')) {
+  button.addEventListener('click', () => {
+    invoke<{ width: number; height: number }>('size_preset', { name: button.dataset.size })
+      .then(showPanelSize)
+      .catch((err) => {
+        settingsNote.textContent = `Could not resize: ${err}`;
+        settingsNote.classList.add('failed');
+      });
+  });
+}
+
 function showSettings(current: Settings) {
   settings = current;
   applyTheme(current.theme);
@@ -551,6 +627,8 @@ function showSettings(current: Settings) {
   fontFamily.value = current.terminal.font_family;
   fontSize.value = String(current.terminal.font_size);
   scrollback.value = String(current.terminal.scrollback);
+  panelWidth.value = String(current.window.panel_width);
+  panelHeight.value = String(current.window.panel_height);
   opacity.value = String(current.opacity);
   opacityValue.textContent = `${current.opacity}%`;
   applyTerminalSettings(current);
@@ -583,6 +661,10 @@ function saveSettings() {
     ...settings,
     opacity: Number(opacity.value),
     window: {
+      // Spread first: the size lives in here too and is applied through
+      // its own command, so rebuilding this object from the checkboxes
+      // alone would quietly throw it away.
+      ...settings.window,
       collapse_on_submit: collapseOnSubmit.checked,
       collapse_delay_ms: Number(collapseDelay.value) || 0,
       expand_when_wanted: expandWhenWanted.checked,

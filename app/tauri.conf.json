@@ -16,7 +16,8 @@
         "width": 660,
         "height": 620,
         "minWidth": 400,
-        "minHeight": 44,
+        "minHeight": 68,
+        "resizable": true,
         "decorations": false,
         "alwaysOnTop": true
       }

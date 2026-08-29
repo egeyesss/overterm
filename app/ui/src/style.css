@@ -486,12 +486,44 @@ body.state-busy .pill .dot {
   display: none;
   flex: 1;
   min-height: 0;
-  min-width: 0;
   box-sizing: border-box;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 10px;
+  flex-direction: column;
   background: var(--chrome);
+}
+
+/* The status strip: what it is doing, where, and for how long. */
+#bar-top {
+  flex: none;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 12px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Somewhere to type, on the transcript surface so the two rows read as
+   chrome over content the way the expanded window does. */
+#bar-bottom {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: var(--body);
+}
+
+/* Where the session is. Given the middle of the row, so it yields space to
+   the timer and the buttons rather than pushing them off the end. */
+#bar-cwd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 400 11.5px/1 var(--mono);
+  color: var(--ink-3);
 }
 
 /* The status line: what it is doing, where, and for how long. */
@@ -500,31 +532,15 @@ body.state-busy .pill .dot {
 /* Last non-empty line of output, so the bar shows progress. */
 /* The gutter. Its glyph turns while the agent works and rests when it
    does not, which is the whole status story at a glance. */
-#bar .prompt {
-  flex: none;
-  font: 400 13px/1 var(--mono);
-  color: var(--ink-4);
-}
-
-body.state-busy #bar .prompt {
-  color: var(--needs);
-  animation: spin 3.2s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 #bar-input {
   flex: 1;
   min-width: 0;
+  padding: 0 16px;
   background: none;
   border: none;
   outline: none;
   color: var(--ink);
-  font: 400 12.5px/1 var(--mono);
+  font: 400 13.5px/1 var(--mono);
 }
 
 #bar-input::placeholder {
@@ -788,15 +804,25 @@ body.mode-bar #bar {
   display: flex;
 }
 
-/* The theme toggle shows the theme you would switch to. Same hit area as
-   the other chrome buttons so the cluster stays even. */
-.theme-glyph {
-  font: 400 13px/1 var(--mono);
-  color: var(--ink-3);
+/* Solid shapes, so the gear reads as a cog and the crescent as a crescent.
+   The default icon styling strokes as well as fills, which thickens a
+   silhouette until its cut-outs close up. */
+.icon svg.solid {
+  stroke: none;
+  fill-rule: evenodd;
 }
 
-.icon.theme-toggle:hover .theme-glyph {
-  color: var(--ink);
+/* The toggle offers the theme you are not in, so exactly one of the two
+   is ever on screen. `data-shown` carries the theme actually being drawn,
+   which is not the setting: "system" resolves to one or the other. */
+.glyph-moon,
+.glyph-sun {
+  display: none;
+}
+
+:root[data-shown='light'] .glyph-moon,
+:root[data-shown='dark'] .glyph-sun {
+  display: block;
 }
 
 /* The active tab is ringed rather than filled, so the mark inside it stays
@@ -828,13 +854,93 @@ body.state-needsInput {
 /* Where the session is, in the collapsed status line. Cut from the left,
    because the end of a path is the part that says which project it is. */
 
-/* Collapsed, the dot already says what the label would, so the pill drops
-   to the dot alone and the row gives its width to the input. */
-#bar .pill {
-  padding: 0;
-  background: none;
+
+/* The size presets, sitting under the two fields they are shortcuts for. */
+.row.presets {
+  gap: 6px;
 }
 
-#bar .pill .label {
+.preset {
+  flex: 1;
+  padding: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--chrome);
+  color: var(--ink-2);
+  font: 500 11.5px/1 var(--mono);
+  cursor: pointer;
+}
+
+.preset:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
+}
+
+/* Resize grips. A borderless window has no frame to grab, so these sit
+   over the edges and hand the drag to the window manager. They are
+   invisible on purpose: the cursor is the affordance. */
+#grips .grip {
+  position: fixed;
+  z-index: 40;
+}
+
+/* Collapsed is a fixed size, so there is nothing to drag. */
+body.mode-bar #grips {
   display: none;
+}
+
+.grip.n,
+.grip.s {
+  left: 6px;
+  right: 6px;
+  height: 5px;
+  cursor: ns-resize;
+}
+.grip.n {
+  top: 0;
+}
+.grip.s {
+  bottom: 0;
+}
+
+.grip.w,
+.grip.e {
+  top: 6px;
+  bottom: 6px;
+  width: 5px;
+  cursor: ew-resize;
+}
+.grip.w {
+  left: 0;
+}
+.grip.e {
+  right: 0;
+}
+
+.grip.nw,
+.grip.ne,
+.grip.sw,
+.grip.se {
+  width: 12px;
+  height: 12px;
+}
+.grip.nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.grip.se {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+.grip.ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.grip.sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
 }
