@@ -190,40 +190,34 @@
     </div>
 
     <!-- Compact strip shown while the agent works. -->
-    <div id="bar">
-      <div id="bar-top" data-tauri-drag-region>
-        <span class="pill" id="bar-pill">
-          <span class="dot"></span>
-          <span class="label">idle</span>
-        </span>
-        <span class="elapsed"></span>
-        <span id="bar-cwd"></span>
-        <span id="bar-line"></span>
-        <div class="controls">
+    <div id="bar" data-tauri-drag-region>
+      <span class="pill" id="bar-pill" title="Detected agent state">
+        <span class="dot"></span>
+        <span class="label">idle</span>
+      </span>
+      <span class="prompt" aria-hidden="true">&#10035;</span>
+      <input
+        id="bar-input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="type here to talk to the session"
+      />
+      <span class="elapsed"></span>
+      <div class="controls">
         <button class="icon theme-toggle" title="Switch theme (right-click to follow the system)">
           <span class="theme-glyph" aria-hidden="true"></span>
         </button>
-          <button class="icon expand" title="Show the full terminal">
-            <svg viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M2 9.5h8M6 2.5 3.5 5.5h5z" />
-            </svg>
-          </button>
-          <button class="icon hide" title="Hide the window (Cmd+Shift+O brings it back)">
-            <svg viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M2 9.5h8" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      <div id="bar-bottom">
-        <span class="prompt">&#10035;</span>
-        <input
-          id="bar-input"
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="type here to talk to the session"
-        />
+        <button class="icon expand" title="Show the full terminal">
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M2 9.5h8M6 2.5 3.5 5.5h5z" />
+          </svg>
+        </button>
+        <button class="icon hide" title="Hide the window (Cmd+Shift+O brings it back)">
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M2 9.5h8" />
+          </svg>
+        </button>
       </div>
     </div>
 

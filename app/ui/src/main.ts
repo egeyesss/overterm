@@ -177,8 +177,6 @@ function newTerminal(): { term: Terminal; fit: FitAddon; search: SearchAddon } {
 }
 
 const body = document.body;
-const barLine = document.getElementById('bar-line')!;
-const barCwd = document.getElementById('bar-cwd')!;
 const barInput = document.getElementById('bar-input') as HTMLInputElement;
 const pills = document.querySelectorAll<HTMLElement>('.pill');
 const elapsedFields = document.querySelectorAll<HTMLElement>('.elapsed');
@@ -210,17 +208,6 @@ function elapsed(ms: number): string {
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-/// Cut a long path from the left, keeping the end.
-///
-/// The end is the part that says which project it is, so that is the half
-/// worth keeping. Done here rather than with CSS: `direction: rtl` moves
-/// the ellipsis to the front but also reorders the path, which turned
-/// `~/dev/overterm` into `dev/overterm/~` on screen.
-const CWD_MAX = 34;
-function shortenPath(path: string): string {
-  if (path.length <= CWD_MAX) return path;
-  return `\u2026${path.slice(-(CWD_MAX - 1))}`;
-}
 
 function render() {
   // The pill speaks for the window, not for one session: with several
@@ -238,10 +225,10 @@ function render() {
   body.classList.remove('state-idle', 'state-busy', 'state-needsInput', 'state-done');
   body.classList.add(`state-${active?.state ?? 'idle'}`);
 
-  barCwd.textContent = active?.cwd ? shortenPath(active.cwd) : '';
-
-  if (mode === 'bar') {
-    barLine.textContent = lastOutputLine();
+  // One row leaves no space for the path, so it is what the status pill
+  // says when you point at it.
+  for (const pill of pills) {
+    pill.title = active?.cwd ? `${label} in ${active.cwd}` : 'Detected agent state';
   }
 }
 setInterval(render, 1000);
@@ -251,18 +238,6 @@ function timings(session: Session): string {
   return session.lastTurnMs === null ? now : `${now} / last ${elapsed(session.lastTurnMs)}`;
 }
 
-/// The bottom-most line with anything on it, read off what xterm actually
-/// rendered so escape sequences are already resolved.
-function lastOutputLine(): string {
-  if (!active) return '';
-  const buffer = active.term.buffer.active;
-  const bottom = buffer.baseY + buffer.cursorY;
-  for (let row = bottom; row >= 0 && row > bottom - active.term.rows; row--) {
-    const text = buffer.getLine(row)?.translateToString(true).trim();
-    if (text) return text;
-  }
-  return '';
-}
 
 // --- window mode -----------------------------------------------------
 

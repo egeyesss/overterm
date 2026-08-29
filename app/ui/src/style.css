@@ -486,59 +486,27 @@ body.state-busy .pill .dot {
   display: none;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   box-sizing: border-box;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 10px;
   background: var(--chrome);
 }
 
 /* The status line: what it is doing, where, and for how long. */
-#bar-top {
-  flex: none;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  padding: 0 12px;
-  background: var(--chrome);
-  border-bottom: 1px solid var(--line);
-}
-
 /* Somewhere to type, on the transcript surface so the two rows read as
    chrome over content the way the expanded window does. */
-#bar-bottom {
-  flex: 1;
-  display: flex;
-  align-items: stretch;
-  min-width: 0;
-  background: var(--body);
-}
-
 /* Last non-empty line of output, so the bar shows progress. */
-#bar-line {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  color: var(--ink-3);
-}
-
 /* The gutter. Its glyph turns while the agent works and rests when it
    does not, which is the whole status story at a glance. */
-#bar-bottom .prompt {
+#bar .prompt {
   flex: none;
-  width: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-right: 1px solid var(--line);
-  font: 400 17px/1 var(--mono);
+  font: 400 13px/1 var(--mono);
   color: var(--ink-4);
 }
 
-body.state-busy #bar-bottom .prompt {
+body.state-busy #bar .prompt {
   color: var(--needs);
   animation: spin 3.2s linear infinite;
 }
@@ -552,12 +520,11 @@ body.state-busy #bar-bottom .prompt {
 #bar-input {
   flex: 1;
   min-width: 0;
-  padding: 0 16px;
   background: none;
   border: none;
   outline: none;
   color: var(--ink);
-  font: 400 13.5px/1 var(--mono);
+  font: 400 12.5px/1 var(--mono);
 }
 
 #bar-input::placeholder {
@@ -860,13 +827,14 @@ body.state-needsInput {
 
 /* Where the session is, in the collapsed status line. Cut from the left,
    because the end of a path is the part that says which project it is. */
-#bar-cwd {
-  flex: none;
-  white-space: nowrap;
-  font: 400 11.5px/1 var(--mono);
-  color: var(--ink-3);
+
+/* Collapsed, the dot already says what the label would, so the pill drops
+   to the dot alone and the row gives its width to the input. */
+#bar .pill {
+  padding: 0;
+  background: none;
 }
 
-#bar-cwd:empty {
+#bar .pill .label {
   display: none;
 }

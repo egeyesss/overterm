@@ -26,13 +26,19 @@ pub const EVENT_ATTENTION: &str = "overterm://attention";
 
 /// Height of the collapsed bar, in logical pixels.
 ///
-/// Two rows: the status line and somewhere to type. This has a twin in
-/// `tauri.conf.json` as the window's minimum height, and the two have to
-/// move together or the window ends up a different size from the layout
-/// inside it.
-const BAR_HEIGHT: f64 = 68.0;
+/// One row: a status dot, somewhere to type, and the window buttons.
+/// This has a twin in `tauri.conf.json` as the window's minimum height,
+/// and the two have to move together or the window ends up a different
+/// size from the layout inside it.
+const BAR_HEIGHT: f64 = 44.0;
+/// Width of the collapsed bar. Narrower than the panel on purpose: while
+/// it is out of the way it should read as a widget rather than as the
+/// same window with the middle taken out.
+const BAR_WIDTH: f64 = 460.0;
 /// Height to restore to if the window was never measured while expanded.
 const DEFAULT_PANEL_HEIGHT: f64 = 620.0;
+/// Width to restore to if the window was never measured while expanded.
+const DEFAULT_PANEL_WIDTH: f64 = 660.0;
 /// Gap between the two checks that a collapse is safe. Claude repaints its
 /// status area every several seconds while it sits idle, which reads as
 /// activity for a moment; a session that is genuinely working is still
@@ -97,6 +103,7 @@ struct Windowing {
     /// Height to restore when expanding, remembered from the last time
     /// the window was expanded so the user's own resizing survives.
     panel_height: f64,
+    panel_width: f64,
 }
 
 #[derive(Clone)]
@@ -109,6 +116,7 @@ impl Choreographer {
             state: Mutex::new(Windowing {
                 mode: WindowMode::default(),
                 panel_height: DEFAULT_PANEL_HEIGHT,
+                panel_width: DEFAULT_PANEL_WIDTH,
             }),
             generation: AtomicU64::new(0),
             sessions: Mutex::new(HashMap::new()),
@@ -335,11 +343,12 @@ impl Choreographer {
             if let Some(height) = logical_height(&window) {
                 state.panel_height = height;
             }
+            if let Some(width) = logical_width(&window) {
+                state.panel_width = width;
+            }
             state.mode = WindowMode::Bar;
         }
-        if let Some(width) = logical_width(&window) {
-            resize_keeping_top(&window, width, BAR_HEIGHT);
-        }
+        resize_keeping_top(&window, BAR_WIDTH, BAR_HEIGHT);
         let _ = app.emit(
             EVENT_MODE,
             ModePayload {
@@ -352,14 +361,12 @@ impl Choreographer {
         let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) else {
             return;
         };
-        let height = {
+        let (width, height) = {
             let mut state = self.0.state.lock().unwrap();
             state.mode = WindowMode::Panel;
-            state.panel_height
+            (state.panel_width, state.panel_height)
         };
-        if let Some(width) = logical_width(&window) {
-            resize_keeping_top(&window, width, height);
-        }
+        resize_keeping_top(&window, width, height);
         if raise {
             // An agent finishing its work must never pull keyboard focus
             // out of whatever the user is typing in.
