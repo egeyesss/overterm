@@ -19,7 +19,8 @@ curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/install.sh |
 
 That's all. You can run that line to install or update the outdated oTerm you already have.
 It puts `oTerm.app` in your Applications folder, 
-and you can open it from Spotlight or Finder like any other app.
+and once you run it one time from there, you can pin it to your dock and 
+open it from there or Applications folder.
 After that, you can open it by the small terminal icon in the menu bar.
 You can show/hide the terminal with `Cmd+Shift+O` after that.
 
