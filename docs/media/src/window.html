@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face{font-family:'IBM Plex Mono';font-weight:400;font-display:block;src:url('fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2')}
+  @font-face{font-family:'IBM Plex Mono';font-weight:500;font-display:block;src:url('fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2')}
+  @font-face{font-family:'IBM Plex Mono';font-weight:600;font-display:block;src:url('fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2')}
+</style>
+<link rel="stylesheet" href="oterm.css">
+<style>
+  /* The transcript. xterm draws this in the real app; here it is static
+     text in the same font and palette so the capture matches. */
+  html,body{background:transparent}
+  #titlebar,#bar-top,#bar-bottom,#tabs{background:var(--chrome)}
+  #terminals{background:var(--body)}
+  .pane{padding:10px 12px;overflow:hidden}
+  .term{font:400 12px/1.5 var(--mono);color:var(--ink-2);white-space:pre-wrap;margin:0}
+  .term .u{color:var(--ink);font-weight:500}
+  .term .dim{color:var(--ink-4)}
+  .term .ok{color:var(--done-ink)}
+  .term .amber{color:var(--needs-ink)}
+  .term .hd{color:var(--ink);font-weight:600}
+  .caret{display:inline-block;width:6.5px;height:14px;background:var(--brand);vertical-align:-3px}
+  .caret.off{opacity:0}
+  /* Prompt row pinned to the bottom of the pane, like the real TUI. */
+  .pane{display:flex;flex-direction:column;justify-content:flex-end}
+  .promptline{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;
+    font:400 12px/1.5 var(--mono);color:var(--ink)}
+  .promptline .chev{color:var(--ink-4);margin-right:6px}
+  .rail{margin-top:6px;font:400 10.5px/1.4 var(--mono);color:var(--ink-4)}
+  .tab .label svg{width:19px;height:19px}
+  /* Frames are captured out of wall-clock order, so the two looping
+     animations are driven from the timeline instead of by CSS. */
+  body.state-busy .pill .dot{animation:none;opacity:var(--dot-op,1)}
+  body.attention::after{animation:none;opacity:var(--glow-op,1)}
+</style>
+</head>
+<body class="mode-panel state-idle">
+  <header id="titlebar">
+    <span id="title"><span class="brand-o">o</span>Term</span>
+    <div class="controls">
+      <span class="pill" id="status"><span class="dot"></span><span class="label">idle</span></span>
+      <span class="elapsed"></span>
+      <button class="icon theme-toggle"><svg class="solid glyph-moon" viewBox="0 0 12 12" style="display:block"><path d="M7.4,1.5 A4.7,4.7 0 1,0 7.4,10.5 A3.7,3.7 0 1,1 7.4,1.5 Z"/></svg></button>
+      <button class="icon settings-open"><svg class="solid" viewBox="0 0 12 12"><path d="M11.35,5.28 L11.35,6.72 L9.61,6.79 L8.87,8.33 L9.90,9.73 L8.77,10.64 L7.64,9.32 L5.97,9.70 L5.52,11.38 L4.10,11.06 L4.42,9.35 L3.09,8.28 L1.49,8.97 L0.86,7.67 L2.40,6.86 L2.40,5.14 L0.86,4.33 L1.49,3.03 L3.09,3.72 L4.42,2.65 L4.10,0.94 L5.52,0.62 L5.97,2.30 L7.64,2.68 L8.77,1.36 L9.90,2.27 L8.87,3.67 L9.61,5.21 Z M7.85,6.00 A1.85,1.85 0 1,0 4.15,6.00 A1.85,1.85 0 1,0 7.85,6.00 Z"/></svg></button>
+      <span class="control-split"></span>
+      <button class="icon collapse"><svg viewBox="0 0 12 12"><path d="M2 2.5h8M6 9.5 3.5 6.5h5z"/></svg></button>
+      <button class="icon hide"><svg viewBox="0 0 12 12"><path d="M2 9.5h8"/></svg></button>
+      <button class="icon close"><svg viewBox="0 0 12 12"><path d="m3 3 6 6M9 3l-6 6"/></svg></button>
+    </div>
+  </header>
+
+  <div id="workspace">
+    <nav id="tabs">
+      <button class="tab has-icon active state-idle" id="t1"><span class="label"></span><span class="dot"></span></button>
+      <button class="tab has-icon state-idle" id="t2"><span class="label"></span><span class="dot"></span></button>
+      <button class="tab has-icon state-idle" id="t3"><span class="label"></span><span class="dot"></span></button>
+      <button id="tab-add">+</button>
+    </nav>
+    <div id="terminals">
+      <div class="pane">
+        <pre class="term" id="term"></pre>
+        <div class="promptline"><span class="chev">&gt;</span><span id="typed"></span><span class="caret" id="caret"></span></div>
+        <div class="rail" id="rail">⏵⏵ auto mode on (shift+tab to cycle)</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="bar">
+    <div id="bar-top">
+      <span class="pill" id="bar-pill"><span class="dot"></span><span class="label">idle</span></span>
+      <span id="bar-cwd">~/overterm</span>
+      <span class="elapsed"></span>
+      <div class="controls">
+        <button class="icon theme-toggle"><svg class="solid glyph-moon" viewBox="0 0 12 12" style="display:block"><path d="M7.4,1.5 A4.7,4.7 0 1,0 7.4,10.5 A3.7,3.7 0 1,1 7.4,1.5 Z"/></svg></button>
+        <span class="control-split"></span>
+        <button class="icon expand"><svg viewBox="0 0 12 12"><path d="M2 9.5h8M6 2.5 3.5 5.5h5z"/></svg></button>
+        <button class="icon hide"><svg viewBox="0 0 12 12"><path d="M2 9.5h8"/></svg></button>
+        <button class="icon close"><svg viewBox="0 0 12 12"><path d="m3 3 6 6M9 3l-6 6"/></svg></button>
+      </div>
+    </div>
+    <div id="bar-bottom">
+      <span class="mark"><span class="mark-bar"></span><span class="mark-face"><span class="mark-o">o</span><span class="mark-caret"></span></span></span>
+      <input id="bar-input" type="text" placeholder="type here to talk to the session">
+    </div>
+  </div>
+<script src="window.js"></script>
+</body>
+</html>

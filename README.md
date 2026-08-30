@@ -9,6 +9,11 @@ watch your favourite show while your agent works. The moment it
 finishes or asks a question, the terminal shows up on its own, without
 you needing to keep alt+tab-ing to check if the task is finished.
 
+![oTerm running Claude Code over a full-screen video: the window collapses to a status bar while the task runs, then expands with the finished answer](docs/media/demo.gif)
+
+*It collapses when you hand it a job and comes back when the answer is
+ready. The video never gets paused or covered.*
+
 > macOS 11 or newer. Free and open source, MIT licensed.
 
 ## Install
@@ -84,8 +89,12 @@ how long. When the agent finishes or hits a question, the terminal
 returns. It never takes keyboard focus doing that, so it cannot eat a
 keystroke meant for the window you were actually using.
 
+![The oTerm status bar floating over a full-screen video, showing a red busy dot, the working directory and an elapsed timer](docs/media/collapsed-over-video.jpg)
+
 **It stays where you can see it.** Always on top, on every Space,
 including over another app's full-screen window.
+
+![The full oTerm window open over a full-screen video, showing a finished Claude Code answer and the tab rail](docs/media/expanded-over-video.jpg)
 
 **Several agents at once.** Each session gets a tab, labelled with
 whichever tool is running in it and carrying its own status dot, so you
