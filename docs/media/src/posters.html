@@ -1,0 +1,162 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:'IBM Plex Mono';font-weight:400;font-display:block;src:url('fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-weight:500;font-display:block;src:url('fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-weight:600;font-display:block;src:url('fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2')}
+:root{--amber:oklch(0.82 0.15 60);--green:oklch(0.75 0.16 145);--red:oklch(0.68 0.19 25)}
+*{box-sizing:border-box}
+body{margin:0;background:#2e2e30;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;
+     display:flex;flex-direction:column;gap:40px;padding:40px;align-items:flex-start}
+.art{position:relative;overflow:hidden;background:#000;flex:none}
+.mono{font-family:'IBM Plex Mono',Menlo,monospace}
+.plate{position:absolute;inset:0;background-size:cover;background-repeat:no-repeat}
+.scrim{position:absolute;inset:0}
+.logo{display:flex;align-items:center;gap:12px}
+.logo .box{border-radius:10px;background:#101012;box-shadow:0 0 0 1px rgba(255,255,255,.2);overflow:hidden;display:flex;flex-direction:column}
+.logo .box .cap{background:#fff}
+.logo .box .face{flex:1;display:flex;align-items:center;justify-content:center;gap:3px}
+.logo .box .face .o{font-family:'IBM Plex Mono',monospace;font-weight:500;color:#fff;letter-spacing:-.03em}
+.logo .box .face .car{background:var(--amber)}
+.logo .word{font-weight:600;color:#fff;letter-spacing:-.03em}
+.logo .word .o{font-family:'IBM Plex Mono',monospace;font-weight:500}
+.h{color:#fff;letter-spacing:-.04em;line-height:1.04;text-wrap:pretty;font-weight:600}
+.sub{color:rgba(255,255,255,.68);line-height:1.45;text-wrap:pretty;font-weight:400}
+.stat{display:flex;align-items:center;gap:11px}
+.stat .d{border-radius:50%;flex:none}
+.stat .t{color:rgba(255,255,255,.7);font-family:'IBM Plex Mono',monospace;font-weight:400}
+.shot{border-radius:14px;overflow:hidden;box-shadow:0 40px 90px rgba(0,0,0,.75),0 0 0 1px rgba(255,255,255,.12)}
+.shot img{display:block;width:100%;height:auto}
+</style></head><body>
+
+<!-- P1 · 1200x630 · link card -->
+<div class="art" id="P1" style="width:1200px;height:630px">
+  <div class="plate" style="background-image:url('stills/card_idlebar.png');background-position:center center"></div>
+  <div class="scrim" style="background:linear-gradient(180deg,rgba(0,0,0,.30) 0%,rgba(0,0,0,0) 22%,rgba(0,0,0,.55) 48%,rgba(0,0,0,.93) 74%,rgba(0,0,0,.99) 100%)"></div>
+  <div style="position:absolute;left:56px;top:150px;display:flex;align-items:center;gap:14px">
+    <span class="mono" style="font-size:15px;color:rgba(255,255,255,.88);text-shadow:0 1px 8px rgba(0,0,0,.9);white-space:nowrap">idle · 1m 40s · still on top</span>
+    <span style="width:150px;height:1px;background:linear-gradient(90deg,rgba(255,255,255,.55),rgba(255,255,255,0))"></span>
+  </div>
+  <div style="position:absolute;left:56px;right:56px;bottom:44px;display:flex;align-items:flex-end;justify-content:space-between;gap:40px">
+    <div style="display:flex;flex-direction:column;gap:12px;max-width:720px">
+      <div class="h" style="font-size:54px">Fullscreen video can't hide it.</div>
+      <div class="sub" style="font-size:20px;max-width:620px">A real macOS overlay that sits above the video layer. Idle in the corner while the episode runs.</div>
+    </div>
+    <div class="logo" style="padding-bottom:6px">
+      <div class="box" style="width:38px;height:38px"><div class="cap" style="height:9px"></div><div class="face"><span class="o" style="font-size:18px">o</span><span class="car" style="width:4px;height:11px"></span></div></div>
+      <span class="word" style="font-size:21px"><span class="o">o</span>Term</span>
+    </div>
+  </div>
+</div>
+
+<!-- P2 · 1080x1350 · portrait -->
+<div class="art" id="P2" style="width:1080px;height:1350px">
+  <div class="plate" style="background-image:url('stills/wide_done.png');background-position:100% center"></div>
+  <div class="scrim" style="background:linear-gradient(180deg,rgba(0,0,0,.70) 0%,rgba(0,0,0,.10) 16%,rgba(0,0,0,.20) 40%,rgba(0,0,0,.86) 60%,rgba(0,0,0,.98) 76%,rgba(0,0,0,1) 100%)"></div>
+  <div class="logo" style="position:absolute;left:56px;top:48px">
+    <div class="box" style="width:38px;height:38px"><div class="cap" style="height:9px"></div><div class="face"><span class="o" style="font-size:18px">o</span><span class="car" style="width:4px;height:11px"></span></div></div>
+    <span class="word" style="font-size:21px"><span class="o">o</span>Term</span>
+  </div>
+  <div style="position:absolute;left:56px;right:56px;bottom:56px;display:flex;flex-direction:column;gap:18px">
+    <div class="stat"><span class="d" style="width:9px;height:9px;background:var(--green)"></span><span class="t" style="font-size:17px">done · baked for 47s · you were watching</span></div>
+    <div class="h" style="font-size:62px">Read the whole answer without pausing the show.</div>
+    <div class="sub" style="font-size:21px;max-width:840px">Translucent, resizable, always in front. Your agent finishes, the panel expands, you keep going.</div>
+  </div>
+</div>
+
+<!-- P3 · 1080x1080 · collapsed while busy -->
+<div class="art" id="P3" style="width:1080px;height:1080px">
+  <div class="plate" style="background-image:url('stills/wide_busy.png');background-position:100% 30%"></div>
+  <div class="scrim" style="background:linear-gradient(180deg,rgba(10,8,20,.30) 0%,rgba(10,8,20,.04) 24%,rgba(0,0,0,.34) 58%,rgba(0,0,0,.92) 88%,rgba(0,0,0,.97) 100%)"></div>
+  <div style="position:absolute;left:52px;right:52px;bottom:52px;display:flex;flex-direction:column;gap:16px">
+    <div class="stat"><span class="d" style="width:9px;height:9px;background:var(--red)"></span><span class="t" style="font-size:17px">busy · 12s · collapsed to the bar</span></div>
+    <div class="h" style="font-size:60px">It shrinks itself while it works.</div>
+    <div class="sub" style="font-size:20px;max-width:780px">Hand it a job and the window drops to a status bar that keeps the timer and stays out of the frame.</div>
+    <div class="logo" style="padding-top:6px">
+      <div class="box" style="width:36px;height:36px"><div class="cap" style="height:8px"></div><div class="face"><span class="o" style="font-size:17px">o</span><span class="car" style="width:4px;height:10px"></span></div></div>
+      <span class="word" style="font-size:20px"><span class="o">o</span>Term</span>
+    </div>
+  </div>
+</div>
+
+<!-- P4 · 1080x1080 · expanded, done -->
+<div class="art" id="P4" style="width:1080px;height:1080px">
+  <div class="plate" style="background-image:url('stills/wide_done.png');background-position:100% center"></div>
+  <div class="scrim" style="background:linear-gradient(180deg,rgba(0,0,0,.62) 0%,rgba(0,0,0,.05) 18%,rgba(0,0,0,.22) 44%,rgba(0,0,0,.88) 68%,rgba(0,0,0,.98) 100%)"></div>
+  <div class="logo" style="position:absolute;left:52px;top:44px">
+    <div class="box" style="width:36px;height:36px"><div class="cap" style="height:8px"></div><div class="face"><span class="o" style="font-size:17px">o</span><span class="car" style="width:4px;height:10px"></span></div></div>
+    <span class="word" style="font-size:20px"><span class="o">o</span>Term</span>
+  </div>
+  <div style="position:absolute;left:52px;right:52px;bottom:48px;display:flex;flex-direction:column;gap:12px">
+    <div class="stat"><span class="d" style="width:9px;height:9px;background:var(--green)"></span><span class="t" style="font-size:17px">done · 9s ago · last 47s</span></div>
+    <div class="h" style="font-size:56px">Baked for 47s. You never left.</div>
+    <div class="sub" style="font-size:20px;max-width:820px">The panel expands with the finished answer and never takes keyboard focus. Read it, reply in the same bar, close it.</div>
+  </div>
+</div>
+
+<!-- P5 · 1600x900 · hero -->
+<div class="art" id="P5" style="width:1600px;height:900px;background:#0b0b0d;display:flex;align-items:center;gap:56px;padding:0 68px">
+  <div style="position:absolute;inset:0;background:radial-gradient(90% 70% at 74% 42%,#1a1a20 0%,#0b0b0d 72%)"></div>
+  <div style="position:relative;display:flex;flex-direction:column;gap:26px;width:520px;flex:none">
+    <div class="logo">
+      <div class="box" style="width:44px;height:44px"><div class="cap" style="height:10px"></div><div class="face"><span class="o" style="font-size:21px">o</span><span class="car" style="width:4px;height:12px"></span></div></div>
+      <span class="word" style="font-size:24px"><span class="o">o</span>Term</span>
+    </div>
+    <div class="h" style="font-size:72px;letter-spacing:-.045em">Agent always on top.</div>
+    <div class="sub" style="font-size:21px;color:rgba(255,255,255,.6)">Claude Code, Codex or a plain shell in a floating window. Each agent gets a tab, a status dot and its own timer.</div>
+    <div style="display:flex;flex-direction:column;gap:11px;padding-top:4px">
+      <div class="stat"><span class="d" style="width:6px;height:6px;background:var(--amber)"></span><span class="t" style="font-size:17px;color:rgba(255,255,255,.66)">collapses while a task runs</span></div>
+      <div class="stat"><span class="d" style="width:6px;height:6px;background:var(--amber)"></span><span class="t" style="font-size:17px;color:rgba(255,255,255,.66)">expands when it needs you</span></div>
+      <div class="stat"><span class="d" style="width:6px;height:6px;background:var(--amber)"></span><span class="t" style="font-size:17px;color:rgba(255,255,255,.66)">opacity and size you choose</span></div>
+    </div>
+  </div>
+  <div style="position:relative;flex:1;display:flex;justify-content:center">
+    <div class="shot" style="width:820px"><img src="stills/wide_done.png" alt="oTerm expanded over a full-screen video"></div>
+  </div>
+</div>
+
+<!-- P6 · 1080x1920 · story -->
+<div class="art" id="P6" style="width:1080px;height:1920px;background:#08080a;display:flex;flex-direction:column;padding:96px 64px 88px;gap:52px">
+  <div style="position:absolute;inset:0;background:radial-gradient(80% 50% at 50% 44%,#16161b 0%,#08080a 76%)"></div>
+  <div class="logo" style="position:relative">
+    <div class="box" style="width:44px;height:44px"><div class="cap" style="height:10px"></div><div class="face"><span class="o" style="font-size:21px">o</span><span class="car" style="width:4px;height:12px"></span></div></div>
+    <span class="word" style="font-size:24px"><span class="o">o</span>Term</span>
+  </div>
+  <div class="h" style="position:relative;font-size:84px;letter-spacing:-.045em">One line<br>over your<br>whole screen.</div>
+  <div class="shot" style="position:relative"><img src="stills/win_busy.png" alt="oTerm collapsed to its status bar"></div>
+  <div style="position:relative;display:flex;flex-direction:column;gap:16px;margin-top:auto">
+    <div class="sub" style="font-size:25px;color:rgba(255,255,255,.62)">Status, path, elapsed time and a place to type. That is the entire footprint while the agent is busy.</div>
+    <div style="display:flex;align-items:center;gap:18px;padding-top:8px">
+      <div style="padding:16px 28px;border-radius:12px;background:#fff;font-size:22px;font-weight:600;color:#111;letter-spacing:-.02em">Get oTerm</div>
+      <span class="mono" style="font-size:19px;color:rgba(255,255,255,.4)">github.com/egeyesss/overterm</span>
+    </div>
+  </div>
+</div>
+
+<!-- P7 · 1080x1350 · busy then done -->
+<div class="art" id="P7" style="width:1080px;height:1350px;background:#08080a;display:flex;flex-direction:column;padding:64px 56px 56px;gap:30px">
+  <div style="position:absolute;inset:0;background:radial-gradient(90% 60% at 50% 30%,#15151a 0%,#08080a 74%)"></div>
+  <div style="position:relative;display:flex;align-items:flex-end;justify-content:space-between;gap:24px">
+    <div class="h" style="font-size:50px;max-width:640px">Busy, then done. Same window.</div>
+    <div class="logo" style="padding-bottom:6px">
+      <div class="box" style="width:34px;height:34px"><div class="cap" style="height:8px"></div><div class="face"><span class="o" style="font-size:16px">o</span><span class="car" style="width:3px;height:10px"></span></div></div>
+      <span class="word" style="font-size:19px"><span class="o">o</span>Term</span>
+    </div>
+  </div>
+  <div style="position:relative;display:flex;flex-direction:column;gap:12px;flex:1;min-height:0">
+    <div style="display:flex;align-items:center;gap:11px"><span class="mono" style="font-size:15px;color:var(--amber)">01</span><span class="sub" style="font-size:19px">task running, collapsed to a bar</span></div>
+    <div style="position:relative;flex:1;border-radius:12px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1)">
+      <div class="plate" style="background-image:url('stills/strip_busy.png');background-position:100% center"></div>
+    </div>
+  </div>
+  <div style="position:relative;display:flex;flex-direction:column;gap:12px;flex:1;min-height:0">
+    <div style="display:flex;align-items:center;gap:11px"><span class="mono" style="font-size:15px;color:var(--amber)">02</span><span class="sub" style="font-size:19px">answer ready, expands in place</span></div>
+    <div style="position:relative;flex:1;border-radius:12px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1)">
+      <div class="plate" style="background-image:url('stills/strip_done.png');background-position:100% center"></div>
+    </div>
+  </div>
+  <div class="sub" style="position:relative;font-size:19px;color:rgba(255,255,255,.5)">The window changes size while your attention stays where it was.</div>
+</div>
+
+<script>window.postersReady = document.fonts.ready;</script>
+</body></html>

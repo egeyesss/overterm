@@ -1,0 +1,207 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face{font-family:'IBM Plex Mono';font-weight:400;font-display:block;src:url('fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2')}
+  @font-face{font-family:'IBM Plex Mono';font-weight:500;font-display:block;src:url('fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2')}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
+  #screen{position:absolute;inset:0;overflow:hidden}
+  /* The video underneath. A slow sinusoidal drift so it reads as playing
+     footage and still loops seamlessly. */
+  #vid{position:absolute;inset:0;background:url('plates/video_day.jpg') center/cover no-repeat;
+       will-change:transform}
+  /* Player chrome, kept quiet: enough to say "fullscreen video", not
+     enough to compete with the window. */
+  #chrome{position:absolute;left:0;right:0;bottom:0;height:calc(132px * var(--s));
+    background:linear-gradient(180deg,rgba(0,0,0,0) 0%,rgba(0,0,0,.55) 62%,rgba(0,0,0,.82) 100%);
+    opacity:.92}
+  #bar-wrap{position:absolute;left:calc(44px * var(--s));right:calc(44px * var(--s));bottom:calc(74px * var(--s));height:calc(4px * var(--s));border-radius:2px;background:rgba(255,255,255,.28)}
+  #played{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:#E50914}
+  #knob{position:absolute;top:50%;width:calc(13px * var(--s));height:calc(13px * var(--s));border-radius:50%;background:#E50914;transform:translate(-50%,-50%)}
+  #tc{position:absolute;right:calc(44px * var(--s));bottom:calc(88px * var(--s));font:400 calc(15px * var(--s))/1 -apple-system,sans-serif;color:rgba(255,255,255,.9)}
+  #glyphs{position:absolute;left:calc(44px * var(--s));bottom:calc(24px * var(--s));display:flex;gap:calc(26px * var(--s));align-items:center;opacity:.9}
+  .g{width:calc(22px * var(--s));height:calc(22px * var(--s));fill:none;stroke:#fff;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  #ttl{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(26px * var(--s));
+    font:500 calc(15px * var(--s))/1 -apple-system,sans-serif;color:rgba(255,255,255,.85)}
+  /* The oTerm window. The iframe is the window, so the real stylesheet
+     inside it lays the thing out exactly as the app does. */
+  #win{position:absolute;border:0;border-radius:12px;transform-origin:top left;overflow:hidden;
+       box-shadow:0 26px 70px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.10);
+       background:transparent;will-change:width,height}
+</style>
+</head>
+<body>
+<div id="screen">
+  <div id="vid"></div>
+  <div id="chrome"></div>
+  <div id="bar-wrap"><div id="played"></div><div id="knob"></div></div>
+  <div id="tc">34:20</div>
+  <div id="ttl">The Long Way Round · E1</div>
+  <div id="glyphs">
+    <svg class="g" viewBox="0 0 24 24"><path d="M7 5v14M17 5v14"/></svg>
+    <svg class="g" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 1 2.3 5.7M4 12V7m0 5h5"/></svg>
+    <svg class="g" viewBox="0 0 24 24"><path d="M3 10v4h4l5 4V6l-5 4H3zM16.5 9.5a4 4 0 0 1 0 5"/></svg>
+  </div>
+  <iframe id="win" src="window.html" scrolling="no"></iframe>
+</div>
+<script>
+// ---- geometry, in logical points, measured off the real screenshots ----
+const PANEL = { w: 513, h: 670 };
+const BAR   = { w: 375, h: 68  };
+const ANCHOR = { right: 34, top: 46 };
+
+const T = 7.6;                       // loop length, seconds
+const P = {                          // phase boundaries
+  typeFrom: 0.30, typeTo: 1.65,
+  submit:   1.80,
+  collapse: 2.10, collapseEnd: 2.38,
+  expand:   4.95, expandEnd:   5.23,
+};
+
+const PROMPT = 'add a --version flag to install.sh';
+
+const HEAD =
+  '<span class="hd">✳ Claude Code</span> <span class="dim">v2.1.251</span>\n' +
+  '<span class="dim">  Opus 5 · ~/overterm</span>\n';
+
+// One finished exchange above the current one, so the panel reads like a
+// session that has been running rather than a fresh window.
+const PRIOR =
+  '\n<span class="u">&gt; why does the overlay drop behind a full-screen app</span>\n\n' +
+  '<span class="ok">●</span> Because a window only joins another app\'s\n' +
+  '  full-screen Space if its collection behaviour\n' +
+  '  says it can. Level alone is not enough.\n\n' +
+  '  Setting <span class="u">canJoinAllApplications</span> next to level\n' +
+  '  25 keeps it in front, and the app has to run\n' +
+  '  as an accessory with no Dock icon or macOS\n' +
+  '  switches you to its own Space instead.\n\n' +
+  '  <span class="dim">crates/core/src/window.rs   +22 −4</span>\n\n' +
+  '<span class="ok">✻</span> <span class="dim">Baked for 1m 12s · done 7:49 PM</span>\n';
+
+const IDLE = HEAD + PRIOR;
+
+const SUBMITTED =
+  IDLE + '\n<span class="u">&gt; ' + PROMPT + '</span>\n\n' +
+  '<span class="amber">✻</span> <span class="dim">Working…</span>\n';
+
+const ANSWER =
+  IDLE + '\n<span class="u">&gt; ' + PROMPT + '</span>\n\n' +
+  '<span class="ok">●</span> Added it. <span class="u">install.sh</span> answers <span class="u">--version</span> from\n' +
+  '  the tag the release workflow stamps in, and\n' +
+  '  skips the download and the checksum on that\n' +
+  '  path.\n\n' +
+  '  <span class="dim">install.sh   +14 −2</span>\n\n' +
+  '<span class="ok">✻</span> <span class="dim">Baked for 47s · done 7:54 PM</span>\n';
+
+const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+function fmt(s) { const m = Math.floor(s / 60), r = Math.floor(s % 60); return m + ':' + String(r).padStart(2, '0'); }
+
+window.setFrame = function (t) {
+  // --- background drift: sinusoidal so frame 0 and frame N-1 match ---
+  const ph = (2 * Math.PI * t) / T;
+  const vid = document.getElementById('vid');
+  vid.style.transform =
+    `scale(1.085) translate(${(12 * Math.sin(ph)).toFixed(2)}px, ${(8 * Math.sin(ph + 1.1)).toFixed(2)}px)`;
+
+  // --- player chrome: timecode and scrubber creep forward ---
+  const pos = 0.412 + (t / T) * 0.006;
+  document.getElementById('played').style.width = (pos * 100) + '%';
+  document.getElementById('knob').style.left = (pos * 100) + '%';
+  document.getElementById('tc').textContent = fmt(2060 - t);
+
+  // --- window mode + morph ---
+  let k; // 0 = panel, 1 = bar
+  if (t < P.collapse) k = 0;
+  else if (t < P.collapseEnd) k = easeOut(clamp01((t - P.collapse) / (P.collapseEnd - P.collapse)));
+  else if (t < P.expand) k = 1;
+  else if (t < P.expandEnd) k = 1 - easeOut(clamp01((t - P.expand) / (P.expandEnd - P.expand)));
+  else k = 0;
+
+  const W = window.innerWidth, H = window.innerHeight;
+  const sc = H / 900;                    // 900pt tall reference screen
+  document.documentElement.style.setProperty('--s', sc);
+  const w = lerp(PANEL.w, BAR.w, k);
+  const h = lerp(PANEL.h, BAR.h, k);
+  const win = document.getElementById('win');
+  // The iframe keeps its intrinsic size and is scaled, so the type inside
+  // scales with it rather than reflowing.
+  win.style.width = w + 'px';
+  win.style.height = h + 'px';
+  win.style.transform = `scale(${sc})`;
+  win.style.top = (ANCHOR.top * sc) + 'px';
+  win.style.left = (W - (ANCHOR.right + w) * sc) + 'px';
+  win.style.boxShadow = `0 ${26*sc}px ${70*sc}px rgba(0,0,0,.55), 0 0 0 ${Math.max(1,sc)}px rgba(255,255,255,.10)`;
+  win.style.borderRadius = (12 * sc) + 'px';
+  // The app's own translucency, so the video reads through the chrome.
+  win.style.opacity = 0.94;
+
+  // --- the state the window is in ---
+  const mode = k > 0.5 ? 'bar' : 'panel';
+  let status, term, typed, caret = false, elapsed = '', attention = false, tabs;
+  let dotOp = 1, glowOp = 1;
+
+  if (t < P.submit) {
+    status = 'idle';
+    term = IDLE;
+    const n = Math.round(PROMPT.length * clamp01((t - P.typeFrom) / (P.typeTo - P.typeFrom)));
+    typed = PROMPT.slice(0, n);
+    caret = (Math.floor(t * 2) % 2 === 0) || n > 0;
+    elapsed = '';
+    tabs = ['idle', 'done', 'idle'];
+  } else if (t < P.expand) {
+    status = 'busy';
+    term = SUBMITTED;
+    typed = '';
+    const secs = Math.max(0, t - P.submit);
+    elapsed = `${Math.floor(secs) + 1}s / last 3s`;
+    dotOp = 0.625 + 0.375 * Math.cos((2 * Math.PI * t) / 1.1);
+    tabs = ['busy', 'done', 'idle'];
+  } else {
+    status = 'done';
+    term = ANSWER;
+    typed = '';
+    caret = true;
+    elapsed = '47s / last 0s';
+    // Attention cue pulses briefly as it comes back, then rests.
+    attention = t < P.expandEnd + 1.15;
+    glowOp = 0.725 + 0.275 * Math.cos((2 * Math.PI * (t - P.expandEnd)) / 1.4);
+    tabs = ['done', 'done', 'idle'];
+  }
+
+  win.contentWindow.apply({ mode, status, term, typed, caret, elapsed, attention, tabs, dotOp, glowOp, cwd: '~/overterm' });
+};
+
+// Hold the window in a state the timeline never passes through, for the
+// stills that need one (an idle session already collapsed to its bar).
+window.pose = function (o) {
+  window.setFrame(o.t === undefined ? 3.6 : o.t);
+  const W = window.innerWidth, H = window.innerHeight, sc = H / 900;
+  const bar = o.mode === 'bar';
+  const w = bar ? BAR.w : PANEL.w, h = bar ? BAR.h : PANEL.h;
+  const win = document.getElementById('win');
+  win.style.width = w + 'px';
+  win.style.height = h + 'px';
+  win.style.transform = `scale(${sc})`;
+  win.style.top = (ANCHOR.top * sc) + 'px';
+  win.style.left = (W - (ANCHOR.right + w) * sc) + 'px';
+  win.contentWindow.apply({
+    mode: o.mode, status: o.status, term: o.term || IDLE, typed: '', caret: false,
+    elapsed: o.elapsed || '', attention: false, dotOp: 1,
+    tabs: o.tabs || ['idle', 'done', 'idle'], cwd: '~/overterm',
+  });
+};
+
+window.sceneReady = (async () => {
+  const win = document.getElementById('win');
+  await new Promise((r) => (win.contentDocument.readyState === 'complete' ? r() : win.addEventListener('load', r)));
+  await win.contentWindow.ready;
+  await document.fonts.ready;
+  window.setFrame(0);
+})();
+</script>
+</body>
+</html>
