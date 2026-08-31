@@ -137,15 +137,23 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
     // The lock is dropped before this: reading the settings file and
     // asking the kernel about a process both take longer than any other
     // session should have to wait to report a state change.
-    // The path rather than the process name. A file name is not always a
-    // name: Claude Code installs its executable as the bare version
-    // number, so the process is called something like 2.1.250 and only
-    // the path it sits in says what it is.
-    let path = crate::platform::process_path(pid).or_else(|| crate::platform::process_name(pid))?;
+    // The path first. A file name is not always a name: Claude Code
+    // installs its executable as the bare version number, so the process
+    // is called something like 2.1.250 and only the path it sits in says
+    // what it is.
+    let path = crate::platform::process_path(pid);
     // Most of these tools are npm packages, so the program on the
     // terminal is node and only the script path it was handed says which
     // tool it is. Without this every one of them is called "node".
     let args = crate::platform::process_args(pid).unwrap_or_default();
+    // Asked for separately rather than as a fallback for the path,
+    // because the two answer different questions and a tool can leave
+    // only the second one usable. Pi sets its own process title, which on
+    // macOS wipes the argument block, so the path is node's and the name
+    // is the only place "pi" survives.
+    let name = crate::platform::process_name(pid);
+    // Nothing to go on at all means the process has gone.
+    let path = path.or_else(|| name.clone())?;
     let settings = crate::settings::load();
 
     // The same lookup answers both questions. Knowing which program owns
@@ -154,7 +162,7 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
     // looking for nothing: between batches of output an agent's cursor
     // rests in its input box, and without a pattern that holds the state
     // the window decides the turn ended and comes back mid-answer.
-    let profile = settings.profile_for(&path, &args);
+    let profile = settings.profile_for(&path, &args, name.as_deref());
     {
         let sessions = app.state::<Sessions>();
         let sessions = sessions.0.lock().unwrap();
@@ -163,13 +171,13 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
         }
     }
 
-    let mut agent = settings.label_for(&path, &args);
+    let mut agent = settings.label_for(&path, &args, name.as_deref());
     // A program writing our markers is Claude Code, exactly, because
     // nothing else has them installed. That outranks anything read off a
     // path, and it is what covers a tool whose executable is named after
     // something other than itself.
     if reports_itself && agent.icon.is_none() {
-        agent = settings.label_for("claude", &[]);
+        agent = settings.label_for("claude", &[], None);
     }
     // Asked of the foreground process rather than remembered from the
     // spawn, because a shell changes directory and the value from spawn
