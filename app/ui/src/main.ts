@@ -23,6 +23,7 @@ import codexMark from './brand/codex.svg?raw';
 import geminiMark from './brand/gemini.svg?raw';
 import kimiMark from './brand/kimi.svg?raw';
 import ollamaMark from './brand/ollama.svg?raw';
+import piMark from './brand/pi.svg?raw';
 // A bitmap, so this one is a URL rather than markup.
 import antigravityMark from './brand/antigravity.png';
 import { SearchAddon } from '@xterm/addon-search';
@@ -1051,9 +1052,12 @@ const TAB_LABEL_MAX = 5;
 ///
 /// Loaded from the files in ./brand rather than pasted in as strings, so
 /// swapping one is dropping a file in. Each carries its own colours,
-/// because a brand mark is not always one flat colour. An agent added
-/// through the settings file has no entry here and falls back to a glyph
-/// and a colour, which is why both of those exist.
+/// because a brand mark is not always one flat colour. Pi's is the
+/// exception and uses currentColor: it is one shape drawn black on light
+/// and white on dark, and a fixed fill would leave it invisible against
+/// one of the two themes. An agent added through the settings file has no
+/// entry here and falls back to a glyph and a colour, which is why both
+/// of those exist.
 const MARKS: Record<string, string> = {
   claude: claudeMark,
   gemini: geminiMark,
@@ -1061,6 +1065,7 @@ const MARKS: Record<string, string> = {
   kimi: kimiMark,
   ollama: ollamaMark,
   antigravity: antigravityMark,
+  pi: piMark,
 };
 
 function setLabel(session: Session, agent: { id: string; label: string; icon: string | null; color: string | null; cwd: string | null }) {
