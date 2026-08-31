@@ -437,17 +437,34 @@ impl Choreographer {
         );
     }
 
+    /// Record that the window is in `mode` now, and say whether that was
+    /// a change.
+    ///
+    /// The answer is what decides whether the window gets touched at all.
+    /// Reshaping a window into the shape it is already in is not free: on
+    /// macOS `setStyleMask` makes a window resign first responder, so the
+    /// terminal stops taking keystrokes and the user has to click back
+    /// into it before they can type.
+    fn entering(&self, mode: WindowMode) -> bool {
+        let mut state = self.0.state.lock().unwrap();
+        let changed = state.mode != mode;
+        state.mode = mode;
+        changed
+    }
+
     fn expand<R: Runtime>(&self, app: &AppHandle<R>, raise: bool) {
         let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) else {
             return;
         };
-        let (width, height) = {
-            let mut state = self.0.state.lock().unwrap();
-            state.mode = WindowMode::Panel;
-            (state.panel_width, state.panel_height)
-        };
-        let _ = window.set_resizable(true);
-        resize_keeping_top(&window, width, height);
+        let changed = self.entering(WindowMode::Panel);
+        if changed {
+            let (width, height) = {
+                let state = self.0.state.lock().unwrap();
+                (state.panel_width, state.panel_height)
+            };
+            let _ = window.set_resizable(true);
+            resize_keeping_top(&window, width, height);
+        }
         if raise {
             // An agent finishing its work must never pull keyboard focus
             // out of whatever the user is typing in.
@@ -455,12 +472,17 @@ impl Choreographer {
                 eprintln!("[choreograph] raise failed: {e}");
             }
         }
-        let _ = app.emit(
-            EVENT_MODE,
-            ModePayload {
-                mode: WindowMode::Panel,
-            },
-        );
+        // Only on a real change. The frontend refocuses the terminal when
+        // this arrives, which is right after a collapse and wrong while
+        // somebody is typing in the find bar or the settings sheet.
+        if changed {
+            let _ = app.emit(
+                EVENT_MODE,
+                ModePayload {
+                    mode: WindowMode::Panel,
+                },
+            );
+        }
     }
 }
 
@@ -585,6 +607,29 @@ mod tests {
     #[test]
     fn busy_and_working_is_just_working() {
         assert!(!Choreographer::stuck(AgentState::Busy, true));
+    }
+
+    #[test]
+    fn expanding_a_window_that_is_already_expanded_touches_nothing() {
+        // The bug this is here to keep fixed. A turn short enough that
+        // the window never collapsed still ended with an expand, and
+        // reshaping an already-expanded window costs the terminal its
+        // keyboard focus: setStyleMask makes a macOS window resign first
+        // responder. Asking an agent something that came back with a
+        // question in under a second meant clicking back into the window
+        // before you could answer it.
+        let choreo = Choreographer::new(ChoreoConfig::default(), 660.0, 620.0);
+        assert_eq!(choreo.mode(), WindowMode::Panel, "starts expanded");
+
+        assert!(
+            !choreo.entering(WindowMode::Panel),
+            "already expanded, so nothing may touch the window"
+        );
+
+        // And a real transition still counts as one, in both directions.
+        assert!(choreo.entering(WindowMode::Bar));
+        assert!(!choreo.entering(WindowMode::Bar));
+        assert!(choreo.entering(WindowMode::Panel));
     }
 
     #[test]
