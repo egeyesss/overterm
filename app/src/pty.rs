@@ -125,35 +125,29 @@ const IDENTIFY_EVERY: u32 = 10;
 /// makes it a way to tell what a session is doing without the program
 /// having to cooperate.
 fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
-    let (pid, reports_itself) = {
+    let pid = {
         let sessions = app.state::<Sessions>();
         let sessions = sessions.0.lock().unwrap();
-        let handle = sessions.get(session_id)?;
-        (
-            handle.session.foreground_pid()?,
-            handle.detector.lock().unwrap().has_precise_source(),
-        )
+        sessions.get(session_id)?.session.foreground_pid()?
     };
     // The lock is dropped before this: reading the settings file and
     // asking the kernel about a process both take longer than any other
     // session should have to wait to report a state change.
-    // The path first. A file name is not always a name: Claude Code
-    // installs its executable as the bare version number, so the process
-    // is called something like 2.1.250 and only the path it sits in says
-    // what it is.
-    let path = crate::platform::process_path(pid);
+    // The path rather than the process name. A file name is not always a
+    // name: Claude Code installs its executable as the bare version
+    // number, so the process is called something like 2.1.250 and only
+    // the path it sits in says what it is.
+    let path = crate::platform::process_path(pid).or_else(|| crate::platform::process_name(pid))?;
     // Most of these tools are npm packages, so the program on the
     // terminal is node and only the script path it was handed says which
     // tool it is. Without this every one of them is called "node".
+    //
+    // The first argument matters too, for a different reason. A tool that
+    // sets its own process title has no script path left to read: on
+    // macOS that write clears the whole block and leaves the title in the
+    // first entry. Pi does it, and that entry is the only place the word
+    // "pi" survives.
     let args = crate::platform::process_args(pid).unwrap_or_default();
-    // Asked for separately rather than as a fallback for the path,
-    // because the two answer different questions and a tool can leave
-    // only the second one usable. Pi sets its own process title, which on
-    // macOS wipes the argument block, so the path is node's and the name
-    // is the only place "pi" survives.
-    let name = crate::platform::process_name(pid);
-    // Nothing to go on at all means the process has gone.
-    let path = path.or_else(|| name.clone())?;
     let settings = crate::settings::load();
 
     // The same lookup answers both questions. Knowing which program owns
@@ -162,7 +156,7 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
     // looking for nothing: between batches of output an agent's cursor
     // rests in its input box, and without a pattern that holds the state
     // the window decides the turn ended and comes back mid-answer.
-    let profile = settings.profile_for(&path, &args, name.as_deref());
+    let profile = settings.profile_for(&path, &args);
     {
         let sessions = app.state::<Sessions>();
         let sessions = sessions.0.lock().unwrap();
@@ -171,21 +165,17 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
         }
     }
 
-    let mut agent = settings.label_for(&path, &args, name.as_deref());
-    // A session writing our markers that nothing else could name is
-    // Claude Code, because its hooks are the ones the app installs by
-    // itself. It covers a tool whose executable is named after something
-    // other than itself, which is exactly what Claude Code's versioned
-    // install looks like when the directory walk comes up empty.
+    // Writing our markers used to be taken as proof a session was Claude
+    // Code, since its hooks were the only ones the app installed. Pi
+    // writes the same markers now, so the marker names no tool and that
+    // guess renamed every unidentified Pi session Claude.
     //
-    // Tested on the id rather than on the icon. A built-in agent carries
-    // no icon, so asking about the icon was asking "did this fail?" and
-    // getting "yes" for every agent that ships with the app. Nothing
-    // showed while Claude Code was the only tool writing markers, and any
-    // second one would have been renamed Claude the moment it did.
-    if reports_itself && agent.id.is_empty() {
-        agent = settings.label_for("claude", &[], None);
-    }
+    // Nothing replaces it. The case it was insurance for, Claude Code's
+    // executable being installed under its version number, is already
+    // covered by the directory walk in `match_program`, which has a test
+    // of its own. A tab reading `node` is a worse answer than `Claude`
+    // and a much better one than the wrong agent's name and mark.
+    let mut agent = settings.label_for(&path, &args);
     // Asked of the foreground process rather than remembered from the
     // spawn, because a shell changes directory and the value from spawn
     // stops being true the first time somebody types `cd`.

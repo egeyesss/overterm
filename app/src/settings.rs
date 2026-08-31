@@ -420,10 +420,8 @@ impl Settings {
     /// script path it was handed. `args` is that command line; an empty
     /// one just means the executable has to speak for itself.
     ///
-    /// `name` is what the process calls itself, for the tools that leave
-    /// nothing else to go on. See `match_command`.
-    pub fn label_for(&self, path: &str, args: &[String], name: Option<&str>) -> Agent {
-        match self.match_command(path, args, name) {
+    pub fn label_for(&self, path: &str, args: &[String]) -> Agent {
+        match self.match_command(path, args) {
             Some(agent) => agent,
             // Not an agent anybody has described, so it speaks for
             // itself. A tab saying zsh is more use than a blank one.
@@ -446,13 +444,16 @@ impl Settings {
     /// Only arguments that look like paths are considered, so a prompt
     /// typed on the command line cannot rename the tab.
     ///
-    /// The name is the last resort and the only thing that works for a
-    /// tool that sets its own process title. Node does that through
-    /// `process.title`, and on macOS setting it overwrites the whole
-    /// argument block, so a tool like Pi that sets it arrives here as the
-    /// path to `node` and a command line with nothing left in it. The
-    /// name is then the one place the tool is still named.
-    fn match_command(&self, path: &str, args: &[String], name: Option<&str>) -> Option<Agent> {
+    /// The last resort is the first argument, which is what a process
+    /// calls itself. Normally that is the interpreter and worth nothing,
+    /// which is why the pass above skips it, but it is the only thing
+    /// left for a tool that sets its own process title. Node does that
+    /// through `process.title`, and on macOS writing it overwrites the
+    /// whole argument block: everything past the first entry is gone and
+    /// the first entry becomes the title. So Pi arrives here as the path
+    /// to `node`, an executable named `node`, and one argument reading
+    /// `pi`.
+    fn match_command(&self, path: &str, args: &[String]) -> Option<Agent> {
         self.match_program(path)
             .or_else(|| {
                 args.iter()
@@ -460,7 +461,7 @@ impl Settings {
                     .filter(|arg| arg.contains('/'))
                     .find_map(|arg| self.match_program(arg))
             })
-            .or_else(|| name.and_then(|name| self.match_program(name)))
+            .or_else(|| args.first().and_then(|arg| self.match_program(arg)))
     }
 
     /// Find the profile for an executable path, if there is one.
@@ -509,7 +510,7 @@ impl Settings {
     /// A program nobody has a profile for gets an empty profile, which
     /// means the built-in defaults. That is the right answer for a shell
     /// and a guess for anything else, which is what a profile is for.
-    pub fn profile_for(&self, path: &str, args: &[String], name: Option<&str>) -> Profile {
+    pub fn profile_for(&self, path: &str, args: &[String]) -> Profile {
         let described = |p: &Profile| p.busy_pattern.is_some() || p.prompt_pattern.is_some();
         let direct = self.profile_from_path(path);
         if described(&direct) {
@@ -523,7 +524,8 @@ impl Settings {
             .map(|arg| self.profile_from_path(arg))
             .find(described)
             .or_else(|| {
-                name.map(|name| self.profile_from_path(name))
+                args.first()
+                    .map(|arg| self.profile_from_path(arg))
                     .filter(described)
             })
             .unwrap_or_default()
@@ -1029,12 +1031,12 @@ mod tests {
     fn a_known_agent_gets_its_name_and_anything_else_gets_its_own() {
         let settings = Settings::default();
         assert_eq!(
-            settings.label_for("/usr/local/bin/claude", &[], None).label,
+            settings.label_for("/usr/local/bin/claude", &[]).label,
             "Claude"
         );
         // A shell is not an agent, and a tab saying zsh is more use than
         // a tab saying nothing.
-        assert_eq!(settings.label_for("/bin/zsh", &[], None).label, "zsh");
+        assert_eq!(settings.label_for("/bin/zsh", &[]).label, "zsh");
     }
 
     #[test]
@@ -1054,11 +1056,8 @@ mod tests {
             }],
             ..Settings::default()
         };
-        assert_eq!(settings.label_for("/opt/kimi", &[], None).label, "K3");
-        assert_eq!(
-            settings.label_for("/usr/bin/claude", &[], None).label,
-            "Claude"
-        );
+        assert_eq!(settings.label_for("/opt/kimi", &[]).label, "K3");
+        assert_eq!(settings.label_for("/usr/bin/claude", &[]).label, "Claude");
     }
 
     #[test]
@@ -1075,12 +1074,12 @@ mod tests {
             }],
             ..Settings::default()
         };
-        assert_eq!(settings.label_for("/usr/bin/claude", &[], None).label, "CC");
+        assert_eq!(settings.label_for("/usr/bin/claude", &[]).label, "CC");
     }
 
     #[test]
     fn the_built_in_claude_profile_knows_what_it_looks_like_working() {
-        let profile = Settings::default().profile_for("/usr/bin/claude", &[], None);
+        let profile = Settings::default().profile_for("/usr/bin/claude", &[]);
         let busy = profile.busy_pattern.expect("claude ships with one");
         assert!(busy.is_match("  esc to interrupt  "));
     }
@@ -1089,7 +1088,7 @@ mod tests {
     fn a_shell_gets_no_patterns_of_its_own() {
         // Nothing to hold: a shell has no status line saying it is busy,
         // and claiming otherwise would be worse than saying nothing.
-        let profile = Settings::default().profile_for("/bin/zsh", &[], None);
+        let profile = Settings::default().profile_for("/bin/zsh", &[]);
         assert!(profile.busy_pattern.is_none());
         assert!(profile.prompt_pattern.is_none());
     }
@@ -1108,7 +1107,7 @@ mod tests {
             }],
             ..Settings::default()
         };
-        let profile = settings.profile_for("/usr/local/bin/gemini", &[], None);
+        let profile = settings.profile_for("/usr/local/bin/gemini", &[]);
         let busy = profile.busy_pattern.expect("configured");
         assert!(busy.is_match("Awaiting Further Direction (esc to cancel, 40s)"));
         assert!(
@@ -1136,11 +1135,11 @@ mod tests {
         // rather than the session it is running in.
         assert!(
             settings
-                .profile_for("/bin/broken", &[], None)
+                .profile_for("/bin/broken", &[])
                 .busy_pattern
                 .is_none()
         );
-        assert_eq!(settings.label_for("/bin/broken", &[], None).label, "Broken");
+        assert_eq!(settings.label_for("/bin/broken", &[]).label, "Broken");
     }
 
     #[test]
@@ -1150,12 +1149,12 @@ mod tests {
         // 2.1.250 and the tab said so until this looked at the path.
         let settings = Settings::default();
         let path = "/Users/someone/.local/share/claude/versions/2.1.250";
-        let agent = settings.label_for(path, &[], None);
+        let agent = settings.label_for(path, &[]);
         assert_eq!(agent.label, "Claude");
         assert_eq!(agent.id, "claude", "the id is what the drawn mark keys off");
         assert!(agent.color.is_some(), "a known agent gets its own colour");
         assert!(
-            settings.profile_for(path, &[], None).busy_pattern.is_some(),
+            settings.profile_for(path, &[]).busy_pattern.is_some(),
             "and its detection patterns, which the version name would have missed"
         );
     }
@@ -1205,11 +1204,9 @@ mod tests {
             "a session with no profile should get stuck busy: {bare:?}"
         );
 
-        let states = with_profile(Some(Settings::default().profile_for(
-            "/usr/local/bin/pi",
-            &[],
-            None,
-        )));
+        let states = with_profile(Some(
+            Settings::default().profile_for("/usr/local/bin/pi", &[]),
+        ));
         assert!(
             states.contains(&AgentState::Busy),
             "the turn has to read as work happening: {states:?}"
@@ -1226,18 +1223,18 @@ mod tests {
         let settings = Settings::default();
         for builtin in BUILTIN_AGENTS {
             let program = builtin.program;
-            let agent = settings.label_for(&format!("/usr/local/bin/{program}"), &[], None);
+            let agent = settings.label_for(&format!("/usr/local/bin/{program}"), &[]);
             assert_eq!(agent.label, builtin.label);
             assert_eq!(agent.id, program, "the id keys the drawn mark");
             assert!(agent.color.is_some(), "{program} has no colour");
             // An icon is the single glyph a config file can set instead
-            // of a label, and nothing that ships uses one. Callers asking
-            // "did this lookup find anything" have to read the id: the
-            // icon says no for every agent in this table.
+            // of a label, and everything here has a drawn mark instead.
+            // Worth pinning because the icon reads as absent whether the
+            // lookup matched or missed, so it can never answer "did this
+            // find anything". Something did ask it that once.
             assert!(
                 agent.icon.is_none(),
-                "{program} has an icon, so the id is no longer the only \
-                 way to tell a match from a miss"
+                "{program} should have a mark, not a glyph"
             );
         }
     }
@@ -1249,7 +1246,7 @@ mod tests {
         let settings = Settings::default();
         for builtin in BUILTIN_AGENTS {
             let program = builtin.program;
-            let profile = settings.profile_for(&format!("/usr/local/bin/{program}"), &[], None);
+            let profile = settings.profile_for(&format!("/usr/local/bin/{program}"), &[]);
             assert_eq!(
                 profile.busy_pattern.is_some(),
                 builtin.busy_pattern.is_some(),
@@ -1274,12 +1271,12 @@ mod tests {
             "/Users/someone/.nvm/versions/node/v22.3.0/lib/node_modules/@google/gemini-cli/dist/index.js"
                 .to_string(),
         ];
-        let agent = settings.label_for("/usr/local/bin/node", &args, None);
+        let agent = settings.label_for("/usr/local/bin/node", &args);
         assert_eq!(agent.label, "Gemini");
         assert_eq!(agent.id, "gemini");
         assert!(
             settings
-                .profile_for("/usr/local/bin/node", &args, None)
+                .profile_for("/usr/local/bin/node", &args)
                 .busy_pattern
                 .is_some(),
             "it needs its detection patterns as well as its name"
@@ -1288,32 +1285,29 @@ mod tests {
 
     #[test]
     fn a_tool_that_renamed_its_own_process_is_still_found() {
-        // A Node tool that sets `process.title` leaves nothing else to go
-        // on. On macOS setting it overwrites the whole argument block, so
-        // the path is the interpreter's, the command line is down to the
-        // one rewritten entry, and the name is the only thing left that
-        // says which tool this is. Without the name it reads as "node".
-        let settings = Settings {
-            agents: vec![AgentProfile {
-                program: "pi".into(),
-                label: "Pi".into(),
-                icon: None,
-                color: Some("#a1a1aa".into()),
-                busy_pattern: Some("Working".into()),
-                prompt_pattern: None,
-            }],
-            ..Settings::default()
-        };
+        // Measured off a live `pi`, not imagined. A Node tool that sets
+        // `process.title` leaves almost nothing to go on, because on
+        // macOS that write clears the whole argument block and puts the
+        // title in the first entry:
+        //
+        //   proc_pidpath  .../v24.20.0/bin/node
+        //   proc_name     node
+        //   argv          ["pi"]
+        //
+        // So the executable is the interpreter, the process name is the
+        // interpreter, and the first argument is the only place the tool
+        // is named at all.
+        let settings = Settings::default();
         let path = "/Users/someone/.nvm/versions/node/v24.20.0/bin/node";
-        let args = ["pi".to_string()];
 
-        assert_eq!(settings.label_for(path, &args, None).label, "node");
-        let agent = settings.label_for(path, &args, Some("pi"));
+        assert_eq!(settings.label_for(path, &[]).label, "node");
+
+        let agent = settings.label_for(path, &["pi".to_string()]);
         assert_eq!(agent.label, "Pi");
         assert_eq!(agent.id, "pi", "the id is what the drawn mark keys off");
         assert!(
             settings
-                .profile_for(path, &args, Some("pi"))
+                .profile_for(path, &["pi".to_string()])
                 .busy_pattern
                 .is_some(),
             "the profile has to follow the name, or the tab is right and \
@@ -1322,22 +1316,20 @@ mod tests {
     }
 
     #[test]
-    fn a_name_never_outranks_a_path_or_an_argument() {
-        // A process picks its own title, so it is the weakest evidence
-        // here and must not be able to rename a session that something
-        // more solid already identified.
+    fn the_first_argument_never_outranks_a_path_or_a_script() {
+        // It is normally just the interpreter, which is why the pass over
+        // the arguments skips it. As a last resort it must not be able to
+        // rename a session that something more solid already identified.
         let settings = Settings::default();
         assert_eq!(
             settings
-                .label_for("/usr/bin/claude", &[], Some("gemini"))
+                .label_for("/usr/bin/claude", &["gemini".to_string()])
                 .label,
             "Claude"
         );
-        let args = ["node".to_string(), "/opt/gemini-cli/index.js".to_string()];
+        let args = ["codex".to_string(), "/opt/gemini-cli/index.js".to_string()];
         assert_eq!(
-            settings
-                .label_for("/usr/local/bin/node", &args, Some("codex"))
-                .label,
+            settings.label_for("/usr/local/bin/node", &args).label,
             "Gemini"
         );
     }
@@ -1346,10 +1338,7 @@ mod tests {
     fn a_real_binary_outranks_anything_on_the_command_line() {
         let settings = Settings::default();
         let args = ["claude".to_string(), "/tmp/gemini/notes".to_string()];
-        assert_eq!(
-            settings.label_for("/usr/bin/claude", &args, None).label,
-            "Claude"
-        );
+        assert_eq!(settings.label_for("/usr/bin/claude", &args).label, "Claude");
     }
 
     #[test]
@@ -1359,7 +1348,7 @@ mod tests {
         let settings = Settings::default();
         let args = ["node".to_string(), "tell me about gemini".to_string()];
         assert_eq!(
-            settings.label_for("/usr/local/bin/node", &args, None).label,
+            settings.label_for("/usr/local/bin/node", &args).label,
             "node"
         );
     }
@@ -1371,11 +1360,7 @@ mod tests {
             "/opt/node_modules/gemini-cli/index.js",
             "/opt/@google/gemini-cli/dist/cli.js",
         ] {
-            assert_eq!(
-                settings.label_for(path, &[], None).label,
-                "Gemini",
-                "for {path}"
-            );
+            assert_eq!(settings.label_for(path, &[]).label, "Gemini", "for {path}");
         }
     }
 
@@ -1394,7 +1379,7 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(
-            settings.label_for("/opt/claude/inner/run", &[], None).label,
+            settings.label_for("/opt/claude/inner/run", &[]).label,
             "Inner"
         );
     }
@@ -1406,7 +1391,7 @@ mod tests {
         // agent must not have every program they run labelled as it.
         let settings = Settings::default();
         let path = "/Users/claude/projects/deep/nested/build/output/thing";
-        assert_eq!(settings.label_for(path, &[], None).label, "thing");
+        assert_eq!(settings.label_for(path, &[]).label, "thing");
     }
 
     #[test]
