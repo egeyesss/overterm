@@ -373,7 +373,7 @@ function paste() {
   navigator.clipboard
     .readText()
     .then((text) => {
-      if (text) write(text);
+      if (text) writeActive(text);
     })
     .catch(() => {});
 }
@@ -947,10 +947,27 @@ for (const clear of ['click', 'keydown'] as const) {
 /// arrives here too, because `macOptionIsMeta` prefixes ESC.
 const NEWLINE = '\x1b\r';
 
-function write(data: string) {
-  if (!active) return;
-  invoke('write_pty', { sessionId: active.id, data }).catch(() => {});
-  track(active, data);
+/// Send bytes to one session's PTY.
+///
+/// Which session is a parameter rather than "whichever tab is on screen",
+/// because not everything that comes through here was typed. A terminal
+/// answers device queries by itself: Claude Code asks for the cursor
+/// position several times a second and xterm replies to every one, and
+/// anything asking about the palette gets an answer the same way. Those
+/// come from the tab whose program asked, which is not always the tab
+/// being looked at, and sending them to the active one types them into
+/// somebody else's shell.
+function write(session: Session, data: string) {
+  // A session that has not finished spawning has no id to write to.
+  if (!session.id) return;
+  invoke('write_pty', { sessionId: session.id, data }).catch(() => {});
+  track(session, data);
+}
+
+/// Send bytes to the tab on screen. Everything the user types is this,
+/// since only the visible terminal can have the keyboard.
+function writeActive(data: string) {
+  if (active) write(active, data);
 }
 
 function track(session: Session, data: string) {
@@ -991,24 +1008,24 @@ function showDraft() {
 barInput.addEventListener('keydown', (event) => {
   if (event.metaKey || event.altKey) return;
   if (event.ctrlKey) {
-    if (event.key === 'c') write('\x03');
-    else if (event.key === 'u') write('\x15');
+    if (event.key === 'c') writeActive('\x03');
+    else if (event.key === 'u') writeActive('\x15');
     // The line break that works in every terminal with no setup, and the
     // only one that reached the session from here before.
-    else if (event.key === 'j') write('\n');
+    else if (event.key === 'j') writeActive('\n');
     else return;
   } else if (event.key === 'Enter') {
     // Same split the full terminal makes: shift means a line break.
-    write(event.shiftKey ? NEWLINE : '\r');
+    writeActive(event.shiftKey ? NEWLINE : '\r');
   } else if (event.key === 'Escape') {
     // How you interrupt Claude Code, and the bar is exactly where you
     // are when you want to. It changes no text, so the draft mirror
     // above is left alone.
-    write('\x1b');
+    writeActive('\x1b');
   } else if (event.key === 'Backspace') {
-    write('\x7f');
+    writeActive('\x7f');
   } else if (event.key.length === 1) {
-    write(event.key);
+    writeActive(event.key);
   } else {
     return; // arrows, tab, function keys: not modelled
   }
@@ -1018,7 +1035,7 @@ barInput.addEventListener('keydown', (event) => {
 barInput.addEventListener('paste', (event) => {
   event.preventDefault();
   const text = event.clipboardData?.getData('text');
-  if (text) write(text);
+  if (text) writeActive(text);
 });
 
 /// Keys this window handles rather than the terminal.
@@ -1038,7 +1055,7 @@ function claimKey(event: KeyboardEvent) {
 function handleTerminalKey(event: KeyboardEvent): boolean {
   if (event.type !== 'keydown') return true;
   if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey) {
-    write(NEWLINE);
+    writeActive(NEWLINE);
     return claimKey(event);
   }
   if (!event.metaKey) return true;
@@ -1216,7 +1233,8 @@ async function addSession(): Promise<void> {
   }
 
   term.attachCustomKeyEventHandler(handleTerminalKey);
-  term.onData(write);
+  // Bound to this session rather than to the active one. See `write`.
+  term.onData((data) => write(session, data));
   term.onResize(({ cols, rows }) => {
     invoke('resize_pty', { sessionId: session.id, cols, rows }).catch(() => {});
   });
