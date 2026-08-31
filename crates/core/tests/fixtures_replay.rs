@@ -273,6 +273,43 @@ fn a_hooked_session_takes_its_answer_from_the_hook() {
 }
 
 #[test]
+fn pi_reports_its_own_turn_through_the_extension() {
+    // Recording: pi 0.84.4 with OverTerm's extension in
+    // ~/.pi/agent/extensions, a prompt submitted at 3s. Pi has no way to
+    // hand the terminal a string the way Claude Code's hooks do, so the
+    // extension writes the marker to /dev/tty itself. This is the proof
+    // that what it writes arrives here as a signal.
+    let mut detector = hooked_detector();
+    let changes = replay(&mut detector, &fixture("pi-hooked.ndjson"), 100, 1000);
+
+    let (_, done) = changes
+        .iter()
+        .find(|(_, c)| matches!(c.cause, Signal::HookStop))
+        .expect("the extension's stop marker should have concluded the turn");
+    assert_eq!(done.to, AgentState::Done);
+    assert_eq!(
+        states(&changes).last(),
+        Some(&AgentState::Done),
+        "the turn ended and the terminal has to come back"
+    );
+}
+
+#[test]
+fn pi_hands_over_a_job_before_it_starts_working() {
+    // The submit marker is what lets the window collapse. It arrives
+    // while the session is already busy from Pi's startup banner, so it
+    // shows up as a flag rather than as a transition, and reading the
+    // transitions alone would miss it entirely.
+    let mut detector = hooked_detector();
+    let events = fixture("pi-hooked.ndjson");
+    replay(&mut detector, &events, 100, 1000);
+    assert!(
+        detector.take_submit(),
+        "no submit reached the detector, so the window would never collapse"
+    );
+}
+
+#[test]
 fn guesswork_stays_off_while_the_hooked_program_runs() {
     // Claude sits at its prompt for half a minute between finishing the
     // answer and being asked to exit, repainting its status area the

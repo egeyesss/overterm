@@ -70,6 +70,13 @@ pub struct Settings {
     /// something a README paragraph covers on its own.
     pub claude_hooks_notice_seen: bool,
 
+    /// Whether OverTerm's Pi extension has been put in place already.
+    ///
+    /// Separate from the Claude Code flag rather than one "integrations
+    /// are set up" bit, because the two are different files for different
+    /// tools and somebody can perfectly well want one and not the other.
+    pub pi_extension_installed: bool,
+
     /// How see-through the window is, as a percentage.
     pub opacity: u8,
 
@@ -168,33 +175,119 @@ pub struct AgentProfile {
     pub prompt_pattern: Option<String>,
 }
 
+/// One of the agents that ships with the app.
+///
+/// Named fields rather than a tuple because there are two optional
+/// patterns at the end now, and two `Option<&str>` in a row is somewhere
+/// a colour and a regex can be swapped without the compiler noticing.
+struct Builtin {
+    /// Name to look for in the program's path, arguments and process name.
+    program: &'static str,
+    label: &'static str,
+    /// The colour the tool draws itself in, so a tab reads as the same
+    /// thing as the terminal underneath it.
+    color: &'static str,
+    /// What the program puts on screen for as long as it is working.
+    busy_pattern: Option<&'static str>,
+    /// What a row looks like when it is waiting for input. Only needed
+    /// for a tool whose input row the built-in default does not describe.
+    prompt_pattern: Option<&'static str>,
+}
+
 /// The agents that ship with the app.
 ///
 /// Deliberately short. Anything else is two lines in a config file, and
 /// guessing at the process names of tools nobody here has run is how you
 /// end up shipping a mapping that is quietly wrong.
-/// Agents recognised out of the box: name to match, label, colour, and
-/// what the program puts on screen for as long as it is working.
 ///
-/// The colour is the one the tool draws itself in, so a tab reads as the
-/// same thing as the terminal underneath it.
-///
-/// A busy pattern is only filled in where the wording is actually known.
-/// Guessing one is worse than leaving it out: a pattern that never
-/// matches reads as support while the window quietly decides every turn
-/// ended early. Anything left as `None` falls back to the default and can
-/// be filled in from a config file by whoever runs that tool.
-const BUILTIN_AGENTS: &[(&str, &str, &str, Option<&str>)] = &[
-    ("claude", "Claude", "#d97757", Some("esc to interrupt")),
-    // Wording taken from a real transcript, which reads
-    // "Awaiting Further Direction (esc to cancel, 40s)".
-    ("gemini", "Gemini", "#4285f4", Some("esc to cancel")),
-    ("codex", "Codex", "#10a37f", None),
-    ("aider", "Aider", "#14b8a6", None),
-    ("opencode", "opencode", "#f59e0b", None),
-    ("kimi", "Kimi", "#1f1f1f", None),
-    ("ollama", "Ollama", "#c8c8c8", None),
-    ("antigravity", "Antigravity", "#4285f4", None),
+/// A pattern is only filled in where the wording is actually known, and
+/// every one of them here came off a recording. Guessing one is worse
+/// than leaving it out: a pattern that never matches reads as support
+/// while the window quietly decides every turn ended early. Anything left
+/// as `None` falls back to the default and can be filled in from a config
+/// file by whoever runs that tool.
+const BUILTIN_AGENTS: &[Builtin] = &[
+    Builtin {
+        program: "claude",
+        label: "Claude",
+        color: "#d97757",
+        busy_pattern: Some("esc to interrupt"),
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "gemini",
+        label: "Gemini",
+        color: "#4285f4",
+        // Wording taken from a real transcript, which reads
+        // "Awaiting Further Direction (esc to cancel, 40s)".
+        busy_pattern: Some("esc to cancel"),
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "codex",
+        label: "Codex",
+        color: "#10a37f",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "aider",
+        label: "Aider",
+        color: "#14b8a6",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "opencode",
+        label: "opencode",
+        color: "#f59e0b",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "kimi",
+        label: "Kimi",
+        color: "#1f1f1f",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "ollama",
+        label: "Ollama",
+        color: "#c8c8c8",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "antigravity",
+        label: "Antigravity",
+        color: "#4285f4",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "pi",
+        label: "Pi",
+        // Pi's own mark is near black on light and white on dark. The
+        // mark inherits this colour, and the dark theme's background is
+        // #101012, so a neutral that reads on both surfaces is worth more
+        // here than the exact brand value.
+        color: "#a1a1aa",
+        // Its streaming indicator, a braille spinner and this word, which
+        // it keeps up for as long as a turn runs. Insurance rather than
+        // the thing that carries Pi: it repaints that spinner every
+        // ninety milliseconds or so, which on its own keeps the session
+        // from ever looking still. This is what holds the state if the
+        // spinner is ever hidden mid-turn.
+        busy_pattern: Some(r"Working\.\.\."),
+        // The one that actually matters for Pi. It has no prompt
+        // character: its input box is an empty row between two full-width
+        // rules, so the rule above the cursor is what says the box is
+        // there and ready. Without this the default pattern finds nothing
+        // to match, quiescence never concludes, and a Pi session sits at
+        // Busy for the rest of its life.
+        prompt_pattern: Some(r"^\u{2500}+\s*$"),
+    },
 ];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the
@@ -296,6 +389,7 @@ impl Default for Settings {
         Self {
             claude_hooks_installed: false,
             claude_hooks_notice_seen: false,
+            pi_extension_installed: false,
             // Opaque. Anyone who wants to see through the overlay asks
             // for it; nobody should have to work out why their terminal
             // arrived faded.
@@ -330,6 +424,7 @@ impl Settings {
     /// terminal is `node` and the only thing naming the tool is the
     /// script path it was handed. `args` is that command line; an empty
     /// one just means the executable has to speak for itself.
+    ///
     pub fn label_for(&self, path: &str, args: &[String]) -> Agent {
         match self.match_command(path, args) {
             Some(agent) => agent,
@@ -345,19 +440,33 @@ impl Settings {
         }
     }
 
-    /// Try the executable first, then the arguments it was given.
+    /// Try the executable, then the arguments it was given, then what the
+    /// process calls itself.
     ///
     /// In that order on purpose: a real binary naming itself is better
-    /// evidence than a path that happens to appear on a command line.
+    /// evidence than a path that happens to appear on a command line,
+    /// which in turn is better than a name a process chose for itself.
     /// Only arguments that look like paths are considered, so a prompt
     /// typed on the command line cannot rename the tab.
+    ///
+    /// The last resort is the first argument, which is what a process
+    /// calls itself. Normally that is the interpreter and worth nothing,
+    /// which is why the pass above skips it, but it is the only thing
+    /// left for a tool that sets its own process title. Node does that
+    /// through `process.title`, and on macOS writing it overwrites the
+    /// whole argument block: everything past the first entry is gone and
+    /// the first entry becomes the title. So Pi arrives here as the path
+    /// to `node`, an executable named `node`, and one argument reading
+    /// `pi`.
     fn match_command(&self, path: &str, args: &[String]) -> Option<Agent> {
-        self.match_program(path).or_else(|| {
-            args.iter()
-                .skip(1)
-                .filter(|arg| arg.contains('/'))
-                .find_map(|arg| self.match_program(arg))
-        })
+        self.match_program(path)
+            .or_else(|| {
+                args.iter()
+                    .skip(1)
+                    .filter(|arg| arg.contains('/'))
+                    .find_map(|arg| self.match_program(arg))
+            })
+            .or_else(|| args.first().and_then(|arg| self.match_program(arg)))
     }
 
     /// Find the profile for an executable path, if there is one.
@@ -388,14 +497,12 @@ impl Settings {
                     cwd: None,
                 });
             }
-            if let Some((name, label, color, _)) =
-                BUILTIN_AGENTS.iter().find(|(name, ..)| *name == part)
-            {
+            if let Some(builtin) = BUILTIN_AGENTS.iter().find(|b| b.program == part) {
                 return Some(Agent {
-                    id: (*name).to_string(),
-                    label: (*label).to_string(),
+                    id: builtin.program.to_string(),
+                    label: builtin.label.to_string(),
                     icon: None,
-                    color: Some((*color).to_string()),
+                    color: Some(builtin.color.to_string()),
                     cwd: None,
                 });
             }
@@ -409,15 +516,23 @@ impl Settings {
     /// means the built-in defaults. That is the right answer for a shell
     /// and a guess for anything else, which is what a profile is for.
     pub fn profile_for(&self, path: &str, args: &[String]) -> Profile {
+        let described = |p: &Profile| p.busy_pattern.is_some() || p.prompt_pattern.is_some();
         let direct = self.profile_from_path(path);
-        if direct.busy_pattern.is_some() || direct.prompt_pattern.is_some() {
+        if described(&direct) {
             return direct;
         }
+        // Same order as `match_command`, so the profile a session gets is
+        // always the one belonging to the agent its tab is named after.
         args.iter()
             .skip(1)
             .filter(|arg| arg.contains('/'))
             .map(|arg| self.profile_from_path(arg))
-            .find(|p| p.busy_pattern.is_some() || p.prompt_pattern.is_some())
+            .find(described)
+            .or_else(|| {
+                args.first()
+                    .map(|arg| self.profile_from_path(arg))
+                    .filter(described)
+            })
             .unwrap_or_default()
     }
 
@@ -436,10 +551,10 @@ impl Settings {
                     prompt_pattern: compile(user.prompt_pattern.as_deref(), "prompt_pattern", part),
                 };
             }
-            if let Some((_, _, _, busy)) = BUILTIN_AGENTS.iter().find(|(name, ..)| *name == part) {
+            if let Some(builtin) = BUILTIN_AGENTS.iter().find(|b| b.program == part) {
                 return Profile {
-                    busy_pattern: compile(*busy, "busy_pattern", part),
-                    prompt_pattern: None,
+                    busy_pattern: compile(builtin.busy_pattern, "busy_pattern", part),
+                    prompt_pattern: compile(builtin.prompt_pattern, "prompt_pattern", part),
                 };
             }
         }
@@ -793,6 +908,7 @@ pub fn save_settings<R: Runtime>(
     let next = Settings {
         claude_hooks_installed: stored.claude_hooks_installed,
         claude_hooks_notice_seen: stored.claude_hooks_notice_seen,
+        pi_extension_installed: stored.pi_extension_installed,
         opacity,
         // Changing this has to register with the OS and can fail, so it
         // goes through set_hotkey and never through a bulk save.
@@ -851,6 +967,7 @@ mod tests {
         let settings = Settings {
             claude_hooks_installed: true,
             claude_hooks_notice_seen: true,
+            pi_extension_installed: true,
             hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
             theme: Theme::Light,
@@ -1048,13 +1165,156 @@ mod tests {
     }
 
     #[test]
+    fn the_pi_profile_gets_a_recorded_turn_back_to_the_user() {
+        // A fixture replay, which normally lives in the core crate. It
+        // cannot: the profile being tested is written here, and core does
+        // not depend on the app. Testing the patterns against a recording
+        // anywhere else would mean writing a second copy of them.
+        //
+        // Recording: pi 0.84.4, a prompt submitted at 3s and a streamed
+        // answer running until about 22.6s. The length is the point. A
+        // busy pattern exists to hold the state through a long answer,
+        // and a recording of a turn that ended quickly cannot show
+        // whether it does.
+        use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
+        use overterm_core::detect::replay::{Dir, read_fixture, replay, replay_with};
+        use overterm_core::{AgentState, Detector};
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/core/fixtures/pi-turn.ndjson");
+        let events = read_fixture(&path).expect("the fixture parses");
+
+        let with_profile = |profile: Option<Profile>| {
+            let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(
+                HeuristicConfig::default(),
+            ))]);
+            if let Some(profile) = profile {
+                detector.set_profile(&profile);
+            }
+            replay(&mut detector, &events, 100, 1000)
+                .into_iter()
+                .map(|(_, change)| change.to)
+                .collect::<Vec<_>>()
+        };
+
+        // Without the profile the default prompt pattern finds nothing to
+        // match on Pi's input box, so the session goes Busy on the
+        // startup banner and stays there. This is the failure the profile
+        // is here to fix, and pinning it is what stops the assertion
+        // below passing for the wrong reason.
+        let bare = with_profile(None);
+        assert_eq!(
+            bare,
+            vec![AgentState::Busy],
+            "a session with no profile should get stuck busy: {bare:?}"
+        );
+
+        let states = with_profile(Some(
+            Settings::default().profile_for("/usr/local/bin/pi", &[]),
+        ));
+        assert!(
+            states.contains(&AgentState::Busy),
+            "the turn has to read as work happening: {states:?}"
+        );
+        assert_eq!(
+            states.last(),
+            Some(&AgentState::Done),
+            "the turn ended and the terminal has to come back: {states:?}"
+        );
+
+        // And the part a short recording cannot show: the window must
+        // not come back over an answer still being written. Worth being
+        // precise about what carries this. Pi repaints its spinner every
+        // ninety milliseconds or so, and the quiet threshold is four
+        // hundred, so output never goes still during a turn and that is
+        // what holds the state here. The busy pattern is insurance for a
+        // turn where the spinner stops instead, which this recording does
+        // not contain. The assertion is about the behaviour either way.
+        let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(
+            HeuristicConfig::default(),
+        ))]);
+        detector.set_profile(&Settings::default().profile_for("/usr/local/bin/pi", &[]));
+        let mut samples = Vec::new();
+        replay_with(&mut detector, &events, 100, 1000, |t, now, detector| {
+            samples.push((t, detector.is_working(now)));
+        });
+
+        // The prompt is typed at 3037ms and the answer stops at 22661ms.
+        // Where the window starts is taken from the recording rather than
+        // picked, because the detector hands the session to the user for
+        // a moment after a keystroke and that moment is not the agent
+        // failing to look busy.
+        let first_working = samples
+            .iter()
+            .find(|(t, working)| *t > 3_100 && *working)
+            .map(|(t, _)| *t)
+            .expect("the turn never read as work happening at all");
+        assert!(
+            first_working < 5_000,
+            "took until {first_working}ms to notice the agent was working"
+        );
+
+        let idle: Vec<u64> = samples
+            .iter()
+            .filter(|(t, working)| (first_working..22_000).contains(t) && !working)
+            .map(|(t, _)| *t)
+            .collect();
+        assert!(
+            idle.is_empty(),
+            "the answer was still streaming and the session read as \
+             finished at {}ms",
+            idle.iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        // The pattern itself, against what Pi really prints. Separate
+        // from the assertions above because none of them would fail if
+        // the wording were wrong, and the wording is the part that is
+        // easy to get wrong.
+        let printed: Vec<u8> = events
+            .iter()
+            .filter(|event| event.dir == Dir::Output)
+            .flat_map(|event| event.bytes.clone())
+            .collect();
+        let printed = String::from_utf8_lossy(&printed);
+        let busy = Settings::default()
+            .profile_for("/usr/local/bin/pi", &[])
+            .busy_pattern
+            .expect("pi ships a busy pattern");
+        assert!(
+            busy.is_match(&printed),
+            "the busy pattern matches nothing Pi actually printed"
+        );
+        // The wording that was nearly used instead, taken from Pi's own
+        // bundle. It appears there five times and every one is a selector
+        // hint, so it is absent from a real turn and would have marked
+        // the model picker as busy rather than the agent.
+        assert!(
+            !printed.contains("Esc to cancel"),
+            "this recording no longer proves why that wording was wrong"
+        );
+    }
+
+    #[test]
     fn the_agents_that_ship_are_all_usable() {
         let settings = Settings::default();
-        for (program, label, ..) in BUILTIN_AGENTS {
+        for builtin in BUILTIN_AGENTS {
+            let program = builtin.program;
             let agent = settings.label_for(&format!("/usr/local/bin/{program}"), &[]);
-            assert_eq!(&agent.label, label);
-            assert_eq!(&agent.id, program, "the id keys the drawn mark");
+            assert_eq!(agent.label, builtin.label);
+            assert_eq!(agent.id, program, "the id keys the drawn mark");
             assert!(agent.color.is_some(), "{program} has no colour");
+            // An icon is the single glyph a config file can set instead
+            // of a label, and everything here has a drawn mark instead.
+            // Worth pinning because the icon reads as absent whether the
+            // lookup matched or missed, so it can never answer "did this
+            // find anything". Something did ask it that once.
+            assert!(
+                agent.icon.is_none(),
+                "{program} should have a mark, not a glyph"
+            );
         }
     }
 
@@ -1063,12 +1323,18 @@ mod tests {
         // These are written by hand in the table above, so a typo would
         // otherwise only turn up as an agent silently losing its profile.
         let settings = Settings::default();
-        for (program, _, _, busy) in BUILTIN_AGENTS {
+        for builtin in BUILTIN_AGENTS {
+            let program = builtin.program;
             let profile = settings.profile_for(&format!("/usr/local/bin/{program}"), &[]);
             assert_eq!(
                 profile.busy_pattern.is_some(),
-                busy.is_some(),
-                "{program} pattern did not survive being compiled"
+                builtin.busy_pattern.is_some(),
+                "{program} busy pattern did not survive being compiled"
+            );
+            assert_eq!(
+                profile.prompt_pattern.is_some(),
+                builtin.prompt_pattern.is_some(),
+                "{program} prompt pattern did not survive being compiled"
             );
         }
     }
@@ -1093,6 +1359,57 @@ mod tests {
                 .busy_pattern
                 .is_some(),
             "it needs its detection patterns as well as its name"
+        );
+    }
+
+    #[test]
+    fn a_tool_that_renamed_its_own_process_is_still_found() {
+        // Measured off a live `pi`, not imagined. A Node tool that sets
+        // `process.title` leaves almost nothing to go on, because on
+        // macOS that write clears the whole argument block and puts the
+        // title in the first entry:
+        //
+        //   proc_pidpath  .../v24.20.0/bin/node
+        //   proc_name     node
+        //   argv          ["pi"]
+        //
+        // So the executable is the interpreter, the process name is the
+        // interpreter, and the first argument is the only place the tool
+        // is named at all.
+        let settings = Settings::default();
+        let path = "/Users/someone/.nvm/versions/node/v24.20.0/bin/node";
+
+        assert_eq!(settings.label_for(path, &[]).label, "node");
+
+        let agent = settings.label_for(path, &["pi".to_string()]);
+        assert_eq!(agent.label, "Pi");
+        assert_eq!(agent.id, "pi", "the id is what the drawn mark keys off");
+        assert!(
+            settings
+                .profile_for(path, &["pi".to_string()])
+                .busy_pattern
+                .is_some(),
+            "the profile has to follow the name, or the tab is right and \
+             the detection is still guessing"
+        );
+    }
+
+    #[test]
+    fn the_first_argument_never_outranks_a_path_or_a_script() {
+        // It is normally just the interpreter, which is why the pass over
+        // the arguments skips it. As a last resort it must not be able to
+        // rename a session that something more solid already identified.
+        let settings = Settings::default();
+        assert_eq!(
+            settings
+                .label_for("/usr/bin/claude", &["gemini".to_string()])
+                .label,
+            "Claude"
+        );
+        let args = ["codex".to_string(), "/opt/gemini-cli/index.js".to_string()];
+        assert_eq!(
+            settings.label_for("/usr/local/bin/node", &args).label,
+            "Gemini"
         );
     }
 

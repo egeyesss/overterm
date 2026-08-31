@@ -3,6 +3,7 @@
 
 mod choreograph;
 mod hooks;
+mod pi;
 mod platform;
 mod pty;
 mod settings;
@@ -21,18 +22,34 @@ pub const MAIN_WINDOW: &str = "main";
 const UNINSTALL_HOOKS: &str = "--uninstall-hooks";
 
 fn main() {
-    // Nothing of ours runs when an app is dragged to the trash, so the
-    // hook entries would outlive the thing that reads them. A package
-    // manager can run this on the way out. No window, so it is answered
-    // before anything starts.
+    // Nothing of ours runs when an app is dragged to the trash, so what
+    // the app put in other tools' config would outlive the thing that
+    // reads it. A package manager can run this on the way out. No window,
+    // so it is answered before anything starts.
+    //
+    // Both are attempted whatever either one does. Leaving Pi's extension
+    // behind because the Claude entries failed would be a tidy-up that
+    // half happened, and the flag is the only chance either gets.
     if std::env::args().any(|arg| arg == UNINSTALL_HOOKS) {
+        let mut failed = false;
         match hooks::uninstall_on_removal() {
             Ok(true) => println!("removed the Claude Code hook entries"),
             Ok(false) => println!("no Claude Code hook entries to remove"),
             Err(e) => {
                 eprintln!("could not remove the hook entries: {e}");
-                std::process::exit(1);
+                failed = true;
             }
+        }
+        match pi::uninstall_on_removal() {
+            Ok(true) => println!("removed the Pi extension"),
+            Ok(false) => println!("no Pi extension to remove"),
+            Err(e) => {
+                eprintln!("could not remove the Pi extension: {e}");
+                failed = true;
+            }
+        }
+        if failed {
+            std::process::exit(1);
         }
         return;
     }
@@ -84,6 +101,11 @@ fn main() {
                 Ok(false) => {}
                 Err(e) => eprintln!("[hooks] not installed: {e}"),
             }
+            match pi::install_on_first_run() {
+                Ok(true) => eprintln!("[pi] extension installed"),
+                Ok(false) => {}
+                Err(e) => eprintln!("[pi] extension not installed: {e}"),
+            }
             // A taken hotkey fails to register; the app is still usable, so
             // report it instead of refusing to start.
             if let Err(e) =
@@ -119,6 +141,9 @@ fn main() {
             hooks::install_hooks,
             hooks::uninstall_hooks,
             hooks::hooks_installed,
+            pi::install_pi_extension,
+            pi::uninstall_pi_extension,
+            pi::pi_extension_installed,
             settings::dismiss_hooks_notice,
             settings::set_hotkey,
             settings::settings,

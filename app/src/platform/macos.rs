@@ -368,3 +368,62 @@ mod tests {
         assert_eq!(process_cwd(-1), None);
     }
 }
+
+#[cfg(test)]
+mod argv_tests {
+    use super::*;
+
+    /// A tool that renames its own process still has to be findable.
+    ///
+    /// Node does this through `process.title`, and on macOS that write
+    /// clears the whole argument block and leaves the title in the first
+    /// entry. Pi does it, so this is the difference between its tab
+    /// saying "Pi" and saying "node". Reproduced against a real process
+    /// rather than described, because the layout `KERN_PROCARGS2` hands
+    /// back is the part that is easy to be wrong about.
+    #[test]
+    fn a_process_that_renamed_itself_reports_the_new_name_first() {
+        let Ok(node) = which_node() else {
+            eprintln!("no node on PATH, skipping");
+            return;
+        };
+        let mut child = std::process::Command::new(node)
+            .args([
+                "-e",
+                "process.title='pi'; setTimeout(() => {}, 5000)",
+                "/somewhere/bin/pi",
+                "--model",
+                "opus",
+            ])
+            .spawn()
+            .expect("spawn node");
+        // Give it a moment to run the title assignment.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+
+        let args = process_args(child.id() as i32);
+        let name = process_name(child.id() as i32);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let args = args.expect("a live process has arguments");
+        assert_eq!(
+            args.first().map(String::as_str),
+            Some("pi"),
+            "the new name has to survive as the first argument: {args:?}"
+        );
+        assert_eq!(
+            name.as_deref(),
+            Some("node"),
+            "and the process name has to stay the executable's, which is \
+             why it cannot be what identifies the tool"
+        );
+    }
+
+    fn which_node() -> Result<std::path::PathBuf, ()> {
+        let path = std::env::var_os("PATH").ok_or(())?;
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("node"))
+            .find(|p| p.is_file())
+            .ok_or(())
+    }
+}
