@@ -150,3 +150,112 @@ jobs:
           else
             gh release create "$tag" dist/* --title "$tag" --generate-notes
           fi
+
+  # Homebrew is the one place a release does not reach on its own, and
+  # forgetting it is not hypothetical: 1.0.2 shipped and the cask sat on
+  # 1.0.1 until somebody noticed two releases later.
+  cask:
+    needs: release
+    runs-on: ubuntu-latest
+    # A release candidate must never become what brew installs. Same rule
+    # the publish step applies, written the same way: a hyphen in the tag
+    # means it is a candidate.
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      # The tap is a different repository, so the token this workflow gets
+      # by default cannot reach it. TAP_TOKEN is a repository secret
+      # holding a personal access token that can: a fine-grained one
+      # scoped to egeyesss/homebrew-overterm with read and write on
+      # contents and on pull requests is enough.
+      #
+      # Missing it leaves the cask alone and says so, rather than failing
+      # a release that is otherwise finished and published. Somebody
+      # cloning this repo has no such secret and no tap to push to, and
+      # their releases should still work.
+      - name: Check for the token that reaches the tap
+        id: token
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          if [ -n "${TAP_TOKEN:-}" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TAP_TOKEN is not set, so the Homebrew cask still points at the previous release. Update Casks/overterm.rb by hand."
+          fi
+
+      - name: Check out the tap
+        if: steps.token.outputs.have == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: egeyesss/homebrew-overterm
+          token: ${{ secrets.TAP_TOKEN }}
+          path: tap
+
+      - name: Point the cask at this release
+        if: steps.token.outputs.have == 'true'
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          dmg="oTerm_${version}_universal.dmg"
+
+          # Downloaded back out of the published release rather than taken
+          # from the build directory. What the cask promises is the
+          # checksum of the file people will actually fetch, and those are
+          # only the same file if the upload went the way it was meant to.
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --pattern "$dmg" --dir .
+          sha=$(sha256sum "$dmg" | cut -d' ' -f1)
+
+          cask=tap/Casks/overterm.rb
+          # Anchored to the start of the line so this cannot match a
+          # version or a checksum mentioned anywhere else in the file.
+          sed -i -E \
+            -e "s/^(  version )\"[^\"]*\"/\1\"${version}\"/" \
+            -e "s/^(  sha256 )\"[^\"]*\"/\1\"${sha}\"/" \
+            "$cask"
+
+          # Read back rather than trusted. A sed that matched nothing exits
+          # zero and leaves a cask pointing at the previous release with
+          # this release's URL, which installs nothing and blames the user.
+          grep -q "^  version \"${version}\"$" "$cask" \
+            || { echo "::error::the version line was not rewritten"; exit 1; }
+          grep -q "^  sha256 \"${sha}\"$" "$cask" \
+            || { echo "::error::the sha256 line was not rewritten"; exit 1; }
+
+          if git -C tap diff --quiet; then
+            echo "the cask already points here"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A pull request rather than a push, because the tap's history is
+      # somebody's to review like any other. It is one click, and an open
+      # pull request is visible in a way a step nobody ran is not.
+      - name: Open the bump on the tap
+        if: steps.token.outputs.have == 'true' && steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -eu
+          cd tap
+          branch="cask-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -qam "Update the cask to ${VERSION}"
+          git push -q -u origin "$branch" --force
+          # No --base, so this goes to whatever the tap calls its default
+          # branch. Asking git for that costs a network round trip and
+          # parses human-readable output; gh already knows.
+          gh pr create --repo egeyesss/homebrew-overterm \
+            --head "$branch" \
+            --title "Update the cask to ${VERSION}" \
+            --body "Opened by the release workflow for ${GITHUB_REF_NAME}. The checksum was taken from the published disk image rather than from the build, so it is the one people downloading it will get." \
+            || echo "::notice::a pull request for $branch is already open"
