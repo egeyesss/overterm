@@ -274,13 +274,18 @@ const BUILTIN_AGENTS: &[Builtin] = &[
         // here than the exact brand value.
         color: "#a1a1aa",
         // Its streaming indicator, a braille spinner and this word, which
-        // it keeps up for as long as a turn runs.
+        // it keeps up for as long as a turn runs. Insurance rather than
+        // the thing that carries Pi: it repaints that spinner every
+        // ninety milliseconds or so, which on its own keeps the session
+        // from ever looking still. This is what holds the state if the
+        // spinner is ever hidden mid-turn.
         busy_pattern: Some(r"Working\.\.\."),
-        // Pi has no prompt character. Its input box is an empty row
-        // between two full-width rules, so the rule above the cursor is
-        // what says the box is there and ready. Without this the default
-        // pattern finds nothing to match, quiescence never concludes, and
-        // a Pi session sits at Busy for the rest of its life.
+        // The one that actually matters for Pi. It has no prompt
+        // character: its input box is an empty row between two full-width
+        // rules, so the rule above the cursor is what says the box is
+        // there and ready. Without this the default pattern finds nothing
+        // to match, quiescence never concludes, and a Pi session sits at
+        // Busy for the rest of its life.
         prompt_pattern: Some(r"^\u{2500}+\s*$"),
     },
 ];
@@ -1166,13 +1171,13 @@ mod tests {
         // not depend on the app. Testing the patterns against a recording
         // anywhere else would mean writing a second copy of them.
         //
-        // Recording: pi 0.84.4, a prompt submitted at 3s, the turn ending
-        // on a provider error a second later. An error is still a turn
-        // ending, and it is the case where getting the terminal back
-        // matters most, since the answer on screen is one somebody has to
-        // read and act on.
+        // Recording: pi 0.84.4, a prompt submitted at 3s and a streamed
+        // answer running until about 22.6s. The length is the point. A
+        // busy pattern exists to hold the state through a long answer,
+        // and a recording of a turn that ended quickly cannot show
+        // whether it does.
         use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
-        use overterm_core::detect::replay::{read_fixture, replay};
+        use overterm_core::detect::replay::{Dir, read_fixture, replay, replay_with};
         use overterm_core::{AgentState, Detector};
 
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1215,6 +1220,80 @@ mod tests {
             states.last(),
             Some(&AgentState::Done),
             "the turn ended and the terminal has to come back: {states:?}"
+        );
+
+        // And the part a short recording cannot show: the window must
+        // not come back over an answer still being written. Worth being
+        // precise about what carries this. Pi repaints its spinner every
+        // ninety milliseconds or so, and the quiet threshold is four
+        // hundred, so output never goes still during a turn and that is
+        // what holds the state here. The busy pattern is insurance for a
+        // turn where the spinner stops instead, which this recording does
+        // not contain. The assertion is about the behaviour either way.
+        let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(
+            HeuristicConfig::default(),
+        ))]);
+        detector.set_profile(&Settings::default().profile_for("/usr/local/bin/pi", &[]));
+        let mut samples = Vec::new();
+        replay_with(&mut detector, &events, 100, 1000, |t, now, detector| {
+            samples.push((t, detector.is_working(now)));
+        });
+
+        // The prompt is typed at 3037ms and the answer stops at 22661ms.
+        // Where the window starts is taken from the recording rather than
+        // picked, because the detector hands the session to the user for
+        // a moment after a keystroke and that moment is not the agent
+        // failing to look busy.
+        let first_working = samples
+            .iter()
+            .find(|(t, working)| *t > 3_100 && *working)
+            .map(|(t, _)| *t)
+            .expect("the turn never read as work happening at all");
+        assert!(
+            first_working < 5_000,
+            "took until {first_working}ms to notice the agent was working"
+        );
+
+        let idle: Vec<u64> = samples
+            .iter()
+            .filter(|(t, working)| (first_working..22_000).contains(t) && !working)
+            .map(|(t, _)| *t)
+            .collect();
+        assert!(
+            idle.is_empty(),
+            "the answer was still streaming and the session read as \
+             finished at {}ms",
+            idle.iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        // The pattern itself, against what Pi really prints. Separate
+        // from the assertions above because none of them would fail if
+        // the wording were wrong, and the wording is the part that is
+        // easy to get wrong.
+        let printed: Vec<u8> = events
+            .iter()
+            .filter(|event| event.dir == Dir::Output)
+            .flat_map(|event| event.bytes.clone())
+            .collect();
+        let printed = String::from_utf8_lossy(&printed);
+        let busy = Settings::default()
+            .profile_for("/usr/local/bin/pi", &[])
+            .busy_pattern
+            .expect("pi ships a busy pattern");
+        assert!(
+            busy.is_match(&printed),
+            "the busy pattern matches nothing Pi actually printed"
+        );
+        // The wording that was nearly used instead, taken from Pi's own
+        // bundle. It appears there five times and every one is a selector
+        // hint, so it is absent from a real turn and would have marked
+        // the model picker as busy rather than the agent.
+        assert!(
+            !printed.contains("Esc to cancel"),
+            "this recording no longer proves why that wording was wrong"
         );
     }
 
