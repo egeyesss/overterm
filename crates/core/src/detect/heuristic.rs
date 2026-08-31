@@ -37,7 +37,11 @@ pub struct HeuristicConfig {
     /// as a prompt. Claude Code shows "esc to interrupt" in its status
     /// area for the entire time it works.
     pub busy_pattern: Regex,
-    /// Bottom rows of the screen scanned for `busy_pattern`.
+    /// How far up from the last written row `busy_pattern` is looked
+    /// for. Counted from where the interface ends rather than from the
+    /// bottom of the terminal, since these tools draw in the normal
+    /// buffer and leave the rows under them empty until a session has
+    /// scrolled.
     pub busy_scan_rows: u16,
     /// Initial terminal size for the screen model. Live sessions pass the
     /// real size and update it through `resize`.
@@ -182,10 +186,32 @@ impl HeuristicAdapter {
         self.row_text(row).trim().is_empty()
     }
 
-    fn busy_hint_on_screen(&self) -> bool {
+    /// The last row with anything on it, or row 0 on a blank screen.
+    ///
+    /// Where a program's interface ends, which is not the bottom of the
+    /// terminal. These tools draw in the normal buffer rather than the
+    /// alternate one, so early in a session their interface sits near the
+    /// top with the rest of the screen still empty under it.
+    fn last_written_row(&self) -> u16 {
         let (rows, _) = self.parser.screen().size();
-        let first = rows.saturating_sub(self.cfg.busy_scan_rows);
-        (first..rows).any(|row| self.cfg.busy_pattern.is_match(&self.row_text(row)))
+        (0..rows)
+            .rev()
+            .find(|&row| !self.row_text(row).trim().is_empty())
+            .unwrap_or(0)
+    }
+
+    /// Whether the bottom of what is drawn says the program is still
+    /// working.
+    ///
+    /// Measured up from the last written row rather than from the bottom
+    /// of the terminal. Pi puts "Working..." six rows above its footer,
+    /// so in a session short enough to leave blank rows below that footer
+    /// the line is further from the bottom of the screen than the window
+    /// reaches, and a pattern that is right is never looked at.
+    fn busy_hint_on_screen(&self) -> bool {
+        let last = self.last_written_row();
+        let first = last.saturating_sub(self.cfg.busy_scan_rows);
+        (first..=last).any(|row| self.cfg.busy_pattern.is_match(&self.row_text(row)))
     }
 }
 
@@ -376,6 +402,41 @@ mod tests {
         assert!(a.is_working(at(base, 100)));
         assert!(!a.is_working(at(base, 600)));
         assert!(!a.is_working(at(base, 30_000)));
+    }
+
+    #[test]
+    fn a_busy_line_is_found_with_blank_rows_still_under_the_interface() {
+        // Pi draws "Working..." six rows above its footer and renders in
+        // the normal buffer, so until a session has scrolled there are
+        // blank rows under the whole interface. Measured from the bottom
+        // of the terminal the line sits outside the window and the right
+        // pattern is never looked at, which reads as the turn ending in
+        // the middle of the work.
+        let base = Instant::now();
+        let mut a = HeuristicAdapter::new(HeuristicConfig {
+            busy_pattern: Regex::new(r"Working\.\.\.").expect("valid"),
+            // The rule Pi draws over its input box, which is what makes
+            // the row above the cursor read as a prompt. Without it the
+            // empty-cursor-row rule below answers instead and this never
+            // reaches the busy scan at all.
+            prompt_pattern: Regex::new(r"^\u{2500}+\s*$").expect("valid"),
+            ..Default::default()
+        });
+        // Row 2 is the working line, rows 4 and 6 the rules around the
+        // input box, and the cursor goes back to the empty input row.
+        // Everything from row 9 down is never written to.
+        a.feed(
+            "\x1b[H\x1b[2J write a haiku\r\n\r\n \u{2846} Working...\r\n\r\n\
+             \u{2500}\u{2500}\u{2500}\r\n\r\n\u{2500}\u{2500}\u{2500}\r\n~\r\n$0.000\x1b[6;1H"
+                .as_bytes(),
+            at(base, 0),
+        );
+        // Long enough after the last output that a still screen is not
+        // mistaken for one that is being repainted.
+        assert!(
+            a.is_working(at(base, 5_000)),
+            "the busy line is on screen and was not looked at"
+        );
     }
 
     #[test]
