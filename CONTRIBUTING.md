@@ -49,10 +49,10 @@ builds the crate on Linux, which is what keeps that from being a promise.
 
 ## Adding an agent
 
-OverTerm works out what a session is doing in tiers. Claude Code writes
-markers that say exactly what happened, because the app installs hooks
-for it. Everything else is read off the screen, which needs no setup from
-anyone and is a guess.
+OverTerm works out what a session is doing in tiers. Claude Code and Pi
+write markers that say exactly what happened, because the app installs a
+hook or an extension for each. Everything else is read off the screen,
+which needs no setup from anyone and is a guess.
 
 A profile is what makes that guess a good one for a particular tool. It
 goes in `~/.config/overterm/config.toml`:
@@ -74,8 +74,13 @@ output an agent's cursor sits back in its input box and the screen looks
 exactly like a finished prompt, so with nothing holding the state the
 window decides the turn is over and comes back in the middle of an
 answer. The pattern is whatever the tool keeps on screen for as long as it
-is working. Claude Code shows `esc to interrupt` and Gemini CLI shows
-`esc to cancel`.
+is working. Claude Code shows `esc to interrupt`, Gemini CLI shows
+`esc to cancel`, and Pi shows `Working...`.
+
+`prompt_pattern` is for a tool whose input row has no prompt character in
+it. Pi is the example: its input box is an empty row between two rules, so
+the default pattern matches nothing on its screen and a session never
+reaches a conclusion at all.
 
 Leaving `busy_pattern` out is fine and is what most built-in profiles do.
 An empty one falls back to the default. A wrong one is worse than none,

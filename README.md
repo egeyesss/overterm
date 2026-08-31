@@ -82,8 +82,9 @@ xattr -dr com.apple.quarantine /Applications/oTerm.app
 **It works out what your agent is doing.** Idle, working, finished, or
 waiting on an answer, with nothing to install and no cooperation from the
 tool. It reads the terminal the way you would, so it works with a CLI it
-has never heard of. **It is designed mainly for Claude Code usage** so it does
-better than guess for CC, which is the section below.
+has never heard of. **Claude Code and Pi get better than a guess**, because
+both can be made to say exactly what happened. The sections below cover
+how.
 
 **It gets out of the way, then comes back.** Hand a session a job and the
 window shrinks to a status bar showing what it is doing, where, and for
@@ -140,6 +141,22 @@ There is a switch for them in the settings, which is also how to put them
 back if you removed them. Deleting the four entries whose command mentions
 `overterm` works too, and oTerm will not add them again. Detection falls
 back to reading the terminal, which is what every other tool gets.
+
+## Pi
+
+[Pi](https://pi.dev) can report itself too, through its extensions rather
+than through hooks, so on first launch oTerm writes one file to
+`~/.pi/agent/extensions/overterm.js`. Pi loads any extension it finds
+there. The file subscribes to three of Pi's events and writes the same
+escape sequence the Claude Code hooks produce.
+
+It has to write that sequence itself, because Pi gives an extension no way
+to hand the terminal a string and owns stdout for its own interface. So
+the extension opens `/dev/tty` and writes there directly. Subagents stay
+quiet, since Pi runs those as separate processes on the same terminal and
+their turns are not the session's turns.
+
+Same switch in the settings, and deleting the file works and sticks.
 
 ## Built with
 
