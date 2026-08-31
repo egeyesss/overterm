@@ -168,33 +168,114 @@ pub struct AgentProfile {
     pub prompt_pattern: Option<String>,
 }
 
+/// One of the agents that ships with the app.
+///
+/// Named fields rather than a tuple because there are two optional
+/// patterns at the end now, and two `Option<&str>` in a row is somewhere
+/// a colour and a regex can be swapped without the compiler noticing.
+struct Builtin {
+    /// Name to look for in the program's path, arguments and process name.
+    program: &'static str,
+    label: &'static str,
+    /// The colour the tool draws itself in, so a tab reads as the same
+    /// thing as the terminal underneath it.
+    color: &'static str,
+    /// What the program puts on screen for as long as it is working.
+    busy_pattern: Option<&'static str>,
+    /// What a row looks like when it is waiting for input. Only needed
+    /// for a tool whose input row the built-in default does not describe.
+    prompt_pattern: Option<&'static str>,
+}
+
 /// The agents that ship with the app.
 ///
 /// Deliberately short. Anything else is two lines in a config file, and
 /// guessing at the process names of tools nobody here has run is how you
 /// end up shipping a mapping that is quietly wrong.
-/// Agents recognised out of the box: name to match, label, colour, and
-/// what the program puts on screen for as long as it is working.
 ///
-/// The colour is the one the tool draws itself in, so a tab reads as the
-/// same thing as the terminal underneath it.
-///
-/// A busy pattern is only filled in where the wording is actually known.
-/// Guessing one is worse than leaving it out: a pattern that never
-/// matches reads as support while the window quietly decides every turn
-/// ended early. Anything left as `None` falls back to the default and can
-/// be filled in from a config file by whoever runs that tool.
-const BUILTIN_AGENTS: &[(&str, &str, &str, Option<&str>)] = &[
-    ("claude", "Claude", "#d97757", Some("esc to interrupt")),
-    // Wording taken from a real transcript, which reads
-    // "Awaiting Further Direction (esc to cancel, 40s)".
-    ("gemini", "Gemini", "#4285f4", Some("esc to cancel")),
-    ("codex", "Codex", "#10a37f", None),
-    ("aider", "Aider", "#14b8a6", None),
-    ("opencode", "opencode", "#f59e0b", None),
-    ("kimi", "Kimi", "#1f1f1f", None),
-    ("ollama", "Ollama", "#c8c8c8", None),
-    ("antigravity", "Antigravity", "#4285f4", None),
+/// A pattern is only filled in where the wording is actually known, and
+/// every one of them here came off a recording. Guessing one is worse
+/// than leaving it out: a pattern that never matches reads as support
+/// while the window quietly decides every turn ended early. Anything left
+/// as `None` falls back to the default and can be filled in from a config
+/// file by whoever runs that tool.
+const BUILTIN_AGENTS: &[Builtin] = &[
+    Builtin {
+        program: "claude",
+        label: "Claude",
+        color: "#d97757",
+        busy_pattern: Some("esc to interrupt"),
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "gemini",
+        label: "Gemini",
+        color: "#4285f4",
+        // Wording taken from a real transcript, which reads
+        // "Awaiting Further Direction (esc to cancel, 40s)".
+        busy_pattern: Some("esc to cancel"),
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "codex",
+        label: "Codex",
+        color: "#10a37f",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "aider",
+        label: "Aider",
+        color: "#14b8a6",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "opencode",
+        label: "opencode",
+        color: "#f59e0b",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "kimi",
+        label: "Kimi",
+        color: "#1f1f1f",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "ollama",
+        label: "Ollama",
+        color: "#c8c8c8",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "antigravity",
+        label: "Antigravity",
+        color: "#4285f4",
+        busy_pattern: None,
+        prompt_pattern: None,
+    },
+    Builtin {
+        program: "pi",
+        label: "Pi",
+        // Pi's own mark is near black on light and white on dark. The
+        // mark inherits this colour, and the dark theme's background is
+        // #101012, so a neutral that reads on both surfaces is worth more
+        // here than the exact brand value.
+        color: "#a1a1aa",
+        // Its streaming indicator, a braille spinner and this word, which
+        // it keeps up for as long as a turn runs.
+        busy_pattern: Some(r"Working\.\.\."),
+        // Pi has no prompt character. Its input box is an empty row
+        // between two full-width rules, so the rule above the cursor is
+        // what says the box is there and ready. Without this the default
+        // pattern finds nothing to match, quiescence never concludes, and
+        // a Pi session sits at Busy for the rest of its life.
+        prompt_pattern: Some(r"^\u{2500}+\s*$"),
+    },
 ];
 
 /// How the terminal itself is drawn. Read by the frontend, which owns the
@@ -402,14 +483,12 @@ impl Settings {
                     cwd: None,
                 });
             }
-            if let Some((name, label, color, _)) =
-                BUILTIN_AGENTS.iter().find(|(name, ..)| *name == part)
-            {
+            if let Some(builtin) = BUILTIN_AGENTS.iter().find(|b| b.program == part) {
                 return Some(Agent {
-                    id: (*name).to_string(),
-                    label: (*label).to_string(),
+                    id: builtin.program.to_string(),
+                    label: builtin.label.to_string(),
                     icon: None,
-                    color: Some((*color).to_string()),
+                    color: Some(builtin.color.to_string()),
                     cwd: None,
                 });
             }
@@ -457,10 +536,10 @@ impl Settings {
                     prompt_pattern: compile(user.prompt_pattern.as_deref(), "prompt_pattern", part),
                 };
             }
-            if let Some((_, _, _, busy)) = BUILTIN_AGENTS.iter().find(|(name, ..)| *name == part) {
+            if let Some(builtin) = BUILTIN_AGENTS.iter().find(|b| b.program == part) {
                 return Profile {
-                    busy_pattern: compile(*busy, "busy_pattern", part),
-                    prompt_pattern: None,
+                    busy_pattern: compile(builtin.busy_pattern, "busy_pattern", part),
+                    prompt_pattern: compile(builtin.prompt_pattern, "prompt_pattern", part),
                 };
             }
         }
@@ -1072,12 +1151,74 @@ mod tests {
     }
 
     #[test]
+    fn the_pi_profile_gets_a_recorded_turn_back_to_the_user() {
+        // A fixture replay, which normally lives in the core crate. It
+        // cannot: the profile being tested is written here, and core does
+        // not depend on the app. Testing the patterns against a recording
+        // anywhere else would mean writing a second copy of them.
+        //
+        // Recording: pi 0.84.4, a prompt submitted at 3s, the turn ending
+        // on a provider error a second later. An error is still a turn
+        // ending, and it is the case where getting the terminal back
+        // matters most, since the answer on screen is one somebody has to
+        // read and act on.
+        use overterm_core::detect::heuristic::{HeuristicAdapter, HeuristicConfig};
+        use overterm_core::detect::replay::{read_fixture, replay};
+        use overterm_core::{AgentState, Detector};
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/core/fixtures/pi-turn.ndjson");
+        let events = read_fixture(&path).expect("the fixture parses");
+
+        let with_profile = |profile: Option<Profile>| {
+            let mut detector = Detector::new(vec![Box::new(HeuristicAdapter::new(
+                HeuristicConfig::default(),
+            ))]);
+            if let Some(profile) = profile {
+                detector.set_profile(&profile);
+            }
+            replay(&mut detector, &events, 100, 1000)
+                .into_iter()
+                .map(|(_, change)| change.to)
+                .collect::<Vec<_>>()
+        };
+
+        // Without the profile the default prompt pattern finds nothing to
+        // match on Pi's input box, so the session goes Busy on the
+        // startup banner and stays there. This is the failure the profile
+        // is here to fix, and pinning it is what stops the assertion
+        // below passing for the wrong reason.
+        let bare = with_profile(None);
+        assert_eq!(
+            bare,
+            vec![AgentState::Busy],
+            "a session with no profile should get stuck busy: {bare:?}"
+        );
+
+        let states = with_profile(Some(Settings::default().profile_for(
+            "/usr/local/bin/pi",
+            &[],
+            None,
+        )));
+        assert!(
+            states.contains(&AgentState::Busy),
+            "the turn has to read as work happening: {states:?}"
+        );
+        assert_eq!(
+            states.last(),
+            Some(&AgentState::Done),
+            "the turn ended and the terminal has to come back: {states:?}"
+        );
+    }
+
+    #[test]
     fn the_agents_that_ship_are_all_usable() {
         let settings = Settings::default();
-        for (program, label, ..) in BUILTIN_AGENTS {
+        for builtin in BUILTIN_AGENTS {
+            let program = builtin.program;
             let agent = settings.label_for(&format!("/usr/local/bin/{program}"), &[], None);
-            assert_eq!(&agent.label, label);
-            assert_eq!(&agent.id, program, "the id keys the drawn mark");
+            assert_eq!(agent.label, builtin.label);
+            assert_eq!(agent.id, program, "the id keys the drawn mark");
             assert!(agent.color.is_some(), "{program} has no colour");
             // An icon is the single glyph a config file can set instead
             // of a label, and nothing that ships uses one. Callers asking
@@ -1096,12 +1237,18 @@ mod tests {
         // These are written by hand in the table above, so a typo would
         // otherwise only turn up as an agent silently losing its profile.
         let settings = Settings::default();
-        for (program, _, _, busy) in BUILTIN_AGENTS {
+        for builtin in BUILTIN_AGENTS {
+            let program = builtin.program;
             let profile = settings.profile_for(&format!("/usr/local/bin/{program}"), &[], None);
             assert_eq!(
                 profile.busy_pattern.is_some(),
-                busy.is_some(),
-                "{program} pattern did not survive being compiled"
+                builtin.busy_pattern.is_some(),
+                "{program} busy pattern did not survive being compiled"
+            );
+            assert_eq!(
+                profile.prompt_pattern.is_some(),
+                builtin.prompt_pattern.is_some(),
+                "{program} prompt pattern did not survive being compiled"
             );
         }
     }
