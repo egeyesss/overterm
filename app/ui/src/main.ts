@@ -54,6 +54,7 @@ type Theme = 'light' | 'dark' | 'system';
 type Settings = {
   claude_hooks_installed: boolean;
   claude_hooks_notice_seen: boolean;
+  pi_extension_installed: boolean;
   opacity: number;
   hotkey: string;
   theme: Theme;
@@ -509,6 +510,8 @@ const hotkey = field<HTMLInputElement>('hotkey');
 const hotkeyNote = field<HTMLElement>('hotkey-note');
 const claudeHooks = field<HTMLInputElement>('claude-hooks');
 const hooksNote = field<HTMLElement>('hooks-note');
+const piExtension = field<HTMLInputElement>('pi-extension');
+const piNote = field<HTMLElement>('pi-note');
 const fontFamily = field<HTMLInputElement>('font-family');
 const fontSize = field<HTMLInputElement>('font-size');
 const scrollback = field<HTMLInputElement>('scrollback');
@@ -809,6 +812,37 @@ claudeHooks.addEventListener('change', () => {
       hooksNote.textContent = `Could not change the Claude Code entries: ${err}`;
       hooksNote.classList.add('failed');
       refreshHooks();
+  refreshPi();
+    });
+});
+
+/// Same idea as the Claude Code toggle above, against a file rather than
+/// a set of JSON entries.
+function refreshPi() {
+  invoke<boolean>('pi_extension_installed')
+    .then((installed) => {
+      piExtension.checked = installed;
+      piNote.classList.remove('failed');
+      piNote.textContent = installed
+        ? 'An extension in ~/.pi/agent/extensions lets oTerm read exactly when a turn starts, finishes or asks you something. Turning this off deletes it and leaves your other extensions alone.'
+        : 'Not set up. Detection falls back to reading the terminal, which is what every other tool gets. Turning this on writes one file to ~/.pi/agent/extensions.';
+    })
+    .catch((err) => {
+      // Usually just means Pi is not installed here.
+      piExtension.checked = false;
+      piNote.classList.remove('failed');
+      piNote.textContent = `Pi's extensions directory not readable here (${err}). Detection still works by reading the terminal.`;
+    });
+}
+
+piExtension.addEventListener('change', () => {
+  const command = piExtension.checked ? 'install_pi_extension' : 'uninstall_pi_extension';
+  invoke<boolean>(command)
+    .then(refreshPi)
+    .catch((err) => {
+      piNote.textContent = `Could not change the Pi extension: ${err}`;
+      piNote.classList.add('failed');
+      refreshPi();
     });
 });
 

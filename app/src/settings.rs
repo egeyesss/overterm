@@ -70,6 +70,13 @@ pub struct Settings {
     /// something a README paragraph covers on its own.
     pub claude_hooks_notice_seen: bool,
 
+    /// Whether OverTerm's Pi extension has been put in place already.
+    ///
+    /// Separate from the Claude Code flag rather than one "integrations
+    /// are set up" bit, because the two are different files for different
+    /// tools and somebody can perfectly well want one and not the other.
+    pub pi_extension_installed: bool,
+
     /// How see-through the window is, as a percentage.
     pub opacity: u8,
 
@@ -377,6 +384,7 @@ impl Default for Settings {
         Self {
             claude_hooks_installed: false,
             claude_hooks_notice_seen: false,
+            pi_extension_installed: false,
             // Opaque. Anyone who wants to see through the overlay asks
             // for it; nobody should have to work out why their terminal
             // arrived faded.
@@ -893,6 +901,7 @@ pub fn save_settings<R: Runtime>(
     let next = Settings {
         claude_hooks_installed: stored.claude_hooks_installed,
         claude_hooks_notice_seen: stored.claude_hooks_notice_seen,
+        pi_extension_installed: stored.pi_extension_installed,
         opacity,
         // Changing this has to register with the OS and can fail, so it
         // goes through set_hotkey and never through a bulk save.
@@ -951,6 +960,7 @@ mod tests {
         let settings = Settings {
             claude_hooks_installed: true,
             claude_hooks_notice_seen: true,
+            pi_extension_installed: true,
             hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
             theme: Theme::Light,
