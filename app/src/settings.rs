@@ -1079,6 +1079,15 @@ mod tests {
             assert_eq!(&agent.label, label);
             assert_eq!(&agent.id, program, "the id keys the drawn mark");
             assert!(agent.color.is_some(), "{program} has no colour");
+            // An icon is the single glyph a config file can set instead
+            // of a label, and nothing that ships uses one. Callers asking
+            // "did this lookup find anything" have to read the id: the
+            // icon says no for every agent in this table.
+            assert!(
+                agent.icon.is_none(),
+                "{program} has an icon, so the id is no longer the only \
+                 way to tell a match from a miss"
+            );
         }
     }
 

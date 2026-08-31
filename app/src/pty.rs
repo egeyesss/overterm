@@ -172,11 +172,18 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
     }
 
     let mut agent = settings.label_for(&path, &args, name.as_deref());
-    // A program writing our markers is Claude Code, exactly, because
-    // nothing else has them installed. That outranks anything read off a
-    // path, and it is what covers a tool whose executable is named after
-    // something other than itself.
-    if reports_itself && agent.icon.is_none() {
+    // A session writing our markers that nothing else could name is
+    // Claude Code, because its hooks are the ones the app installs by
+    // itself. It covers a tool whose executable is named after something
+    // other than itself, which is exactly what Claude Code's versioned
+    // install looks like when the directory walk comes up empty.
+    //
+    // Tested on the id rather than on the icon. A built-in agent carries
+    // no icon, so asking about the icon was asking "did this fail?" and
+    // getting "yes" for every agent that ships with the app. Nothing
+    // showed while Claude Code was the only tool writing markers, and any
+    // second one would have been renamed Claude the moment it did.
+    if reports_itself && agent.id.is_empty() {
         agent = settings.label_for("claude", &[], None);
     }
     // Asked of the foreground process rather than remembered from the
