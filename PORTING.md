@@ -7,6 +7,10 @@ somebody else can, without touching anything outside one directory.
 This is what such a port has to fill in, and what the macOS one learned
 the hard way so you do not have to learn it again.
 
+For Windows specifically, [windows_port_guide.md](windows_port_guide.md)
+lists the same work in the order it makes sense to do it, and covers the
+parts that are only a problem there.
+
 ## Where the work is
 
 `crates/core` is portable already. PTY sessions go through `portable-pty`,
