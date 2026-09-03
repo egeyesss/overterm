@@ -52,9 +52,9 @@ curl -fsSL https://raw.githubusercontent.com/egeyesss/overterm/main/uninstall.sh
 
 The app is not signed with an Apple Developer certificate, which costs $99/yr, and
 I am broke so I don't want to spend money on that for a side project.
-macOS refuses to open an unsigned app that carries the
-`com.apple.quarantine` attribute, and tells you it cannot be checked for
-malware.
+Without one the app cannot be notarised, and macOS refuses to open an app
+it cannot check for malware when the file carries the
+`com.apple.quarantine` attribute.
 
 That attribute is set by whatever downloaded the file. Browsers set it and
 Homebrew sets it. `curl` does not, so an app it downloads is never
@@ -76,6 +76,19 @@ xattr -dr com.apple.quarantine /Applications/oTerm.app
 ```
 
 > On macOS 15 and later, right-clicking an app to open it stopped working as a way around this, so the `xattr` line is what you need.
+
+### macOS asking for your Desktop folder
+
+macOS charges a command's file access to the app that owns the terminal, so
+a session that reads or writes something on your Desktop looks like oTerm
+reading and writing it. The first time that happens macOS asks, the same
+way it asks for Terminal and iTerm.
+
+The bundle carries an ad-hoc signature, which ties your answer to a hash of
+the build. Answering once holds for as long as that build is installed, and
+a new release has a different hash, so the question comes back once after
+each update. A Developer ID certificate is what would stop that, because
+the answer would follow the certificate and survive a rebuild.
 
 ## What it does
 

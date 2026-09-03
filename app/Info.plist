@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the generated Info.plist by the bundler, which picks up any
+  Info.plist sitting next to tauri.conf.json.
+
+  macOS charges a command's file access to the app that owns the terminal,
+  so these alerts name oTerm even though the thing reading the file is
+  whatever was typed into it. Without a usage string the alert asks for the
+  folder and says nothing about why, which is not a fair question to put to
+  somebody.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Commands you run in oTerm read and write files in the folder you run them from, so a session in your Desktop folder needs access to it.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Commands you run in oTerm read and write files in the folder you run them from, so a session in your Documents folder needs access to it.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Commands you run in oTerm read and write files in the folder you run them from, so a session in your Downloads folder needs access to it.</string>
+</dict>
+</plist>
