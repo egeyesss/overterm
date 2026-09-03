@@ -60,8 +60,32 @@ jobs:
           npm ci
           npm ci --prefix app/ui
 
+      # The bundler takes signing and notarisation credentials from the
+      # environment, and an unset repository secret still arrives as an
+      # empty string rather than not at all. An empty APPLE_SIGNING_IDENTITY
+      # counts as an identity and would replace the pseudo-identity from
+      # tauri.conf.json with nothing, so the empty ones are dropped first.
+      #
+      # With none of them set this is the ad-hoc build. With all of them set
+      # the same command produces a Developer ID signed, notarised and
+      # stapled bundle, so getting an Apple account later is a secrets
+      # change and nothing else.
       - name: Build
-        run: npm run tauri build -- --target universal-apple-darwin
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+                      APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD \
+                      APPLE_TEAM_ID; do
+            [ -n "${!name:-}" ] || unset "$name"
+          done
+          npm run tauri build -- --target universal-apple-darwin
 
       # A green build proves the code compiles and says nothing about what
       # ended up in the bundle. The first 0.1.0 build predated the
@@ -102,6 +126,27 @@ jobs:
           # missing from a build that reported success.
           test -s app/ui/dist/index.html \
             || { echo "::error::the frontend was never built"; exit 1; }
+
+      # The linker leaves a signature on the Mach-O whatever else happens,
+      # so an unsigned bundle still has a binary that looks signed inside
+      # it. Every release up to 1.0.3 shipped that way with a green build,
+      # which is why this is checked rather than assumed. macOS stores a
+      # code requirement next to a file access grant, and a bundle that
+      # cannot satisfy one is asked about again on the next file a session
+      # touches, forever.
+      - name: Check the signature
+        run: |
+          set -eu
+          app=target/universal-apple-darwin/release/bundle/macos/oTerm.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          info=$(codesign -dv --verbose=4 "$app" 2>&1)
+          echo "$info"
+
+          # A real signature seals the bundle's resources; the linker's
+          # covers the binary alone and reports "Sealed Resources=none".
+          echo "$info" | grep -q "^Sealed Resources version=" \
+            || { echo "::error::the bundle resources were not sealed"; exit 1; }
 
       - name: Package the app
         run: |
