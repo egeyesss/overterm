@@ -78,6 +78,13 @@ rm -rf "$DEST"
 rm -rf "$APPS/OverTerm.app"
 mv "$work/$APP_NAME" "$DEST"
 
+# curl does not quarantine what it downloads, so this is usually a no-op.
+# It matters when the tarball arrived some other way, because tar carries
+# the flag from the archive onto everything it unpacks, and Gatekeeper then
+# refuses to open an app it cannot check with Apple. oTerm is signed with an
+# ad-hoc signature and is not notarised, so there is nothing to check.
+xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+
 say ""
 say "Installed to $DEST"
 say "Open it from Finder or Spotlight. Cmd+Shift+O summons and hides it."
