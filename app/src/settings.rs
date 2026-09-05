@@ -420,11 +420,11 @@ impl Settings {
     /// correct a built-in that has gone stale, and an unknown program is
     /// its own label: a session sitting at a shell should say `zsh`
     /// rather than nothing at all.
+    ///
     /// Most of these tools are npm packages, so the program on the
     /// terminal is `node` and the only thing naming the tool is the
     /// script path it was handed. `args` is that command line; an empty
     /// one just means the executable has to speak for itself.
-    ///
     pub fn label_for(&self, path: &str, args: &[String]) -> Agent {
         match self.match_command(path, args) {
             Some(agent) => agent,
@@ -561,7 +561,6 @@ impl Settings {
         Profile::default()
     }
 
-    /// The stored preferences as the rules engine wants them.
     /// Move a setting nobody chose onto its new default.
     ///
     /// Saving writes every field, so a file written by an older build
@@ -588,6 +587,7 @@ impl Settings {
         self.settings_version = SETTINGS_VERSION;
     }
 
+    /// The stored preferences as the rules engine wants them.
     pub fn choreo(&self) -> ChoreoConfig {
         ChoreoConfig {
             collapse_on_submit: self.window.collapse_on_submit,

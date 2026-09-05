@@ -133,6 +133,7 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
     // The lock is dropped before this: reading the settings file and
     // asking the kernel about a process both take longer than any other
     // session should have to wait to report a state change.
+    //
     // The path rather than the process name. A file name is not always a
     // name: Claude Code installs its executable as the bare version
     // number, so the process is called something like 2.1.250 and only
