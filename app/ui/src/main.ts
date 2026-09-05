@@ -812,7 +812,6 @@ claudeHooks.addEventListener('change', () => {
       hooksNote.textContent = `Could not change the Claude Code entries: ${err}`;
       hooksNote.classList.add('failed');
       refreshHooks();
-  refreshPi();
     });
 });
 
