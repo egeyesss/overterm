@@ -27,13 +27,13 @@ serde_json.workspace = true
 # terminal navigates the webview itself and the app becomes a browser.
 tauri-plugin-opener = "2.5.4"
 
-# The non-activating floating panel the overlay needs exists only on
-# NSPanel, which Tauri does not create. These are already in the tree
+# AppKit calls the overlay needs (window level, collection behaviour,
+# raising without focus) that Tauri does not expose. Already in the tree
 # through wry, so using them directly costs no extra dependencies.
 [target.'cfg(target_os = "macos")'.dependencies]
 # Already in the tree through portable-pty. Used to ask the kernel what
 # program owns a session's terminal, which is how a tab knows its agent.
 libc = "0.2"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSPanel", "NSResponder", "NSWindow"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow"] }
 objc2-foundation = "0.3"
