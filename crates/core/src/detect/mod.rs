@@ -246,7 +246,6 @@ impl Detector {
         }
     }
 
-    /// Forward a terminal resize to the adapters.
     /// Tell every adapter which program owns the terminal now.
     pub fn set_profile(&mut self, profile: &Profile) {
         for adapter in &mut self.adapters {
@@ -254,6 +253,7 @@ impl Detector {
         }
     }
 
+    /// Forward a terminal resize to the adapters.
     pub fn resize(&mut self, cols: u16, rows: u16) {
         for adapter in &mut self.adapters {
             adapter.resize(cols, rows);

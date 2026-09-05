@@ -228,13 +228,6 @@ impl Choreographer {
         });
     }
 
-    /// Whether every session is genuinely working.
-    ///
-    /// Deliberately all rather than any: the question is "is it safe to
-    /// hide the terminal", and one session sitting on something nobody
-    /// can see is reason enough to keep it. With no sessions there is
-    /// nothing to protect, so an unanswerable question is not a reason to
-    /// refuse.
     /// Whether a session is sitting on something nobody can see.
     ///
     /// Busy while doing no work is what a program that printed a question

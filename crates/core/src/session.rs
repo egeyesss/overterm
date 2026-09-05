@@ -150,14 +150,13 @@ impl PtySession {
         Ok(())
     }
 
-    /// Resize the PTY. The kernel delivers SIGWINCH to the child for us.
     /// Process id of whatever currently owns this terminal.
     ///
-    /// A session is a shell, and the shell runs other programs in the
-    /// same terminal, so this changes as the user starts and leaves
-    /// things. It is the shell's own pid while sitting at a prompt and
-    /// the agent's while one is running, which is what makes it a way to
-    /// tell what a session is doing without asking the program.
+    /// A session is a shell, and the shell runs other programs in the same
+    /// terminal, so this changes as the user starts and leaves things: it's
+    /// the shell's own pid at a prompt and the agent's while one is running,
+    /// which is what makes this a way to tell what a session is doing
+    /// without asking the program.
     ///
     /// Unix only. Windows has no process group on a console handle, so a
     /// port answers this some other way and gets `None` until it does.
@@ -172,6 +171,7 @@ impl PtySession {
         }
     }
 
+    /// Resize the PTY. The kernel delivers SIGWINCH to the child for us.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), SessionError> {
         self.master
             .resize(PtySize {
