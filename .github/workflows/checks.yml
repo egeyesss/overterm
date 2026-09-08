@@ -56,3 +56,66 @@ jobs:
       # tests replay recorded transcripts, so both run here unchanged.
       - name: Tests
         run: cargo test -p overterm-core
+
+  # The other half of the portability promise: the app crate itself, not
+  # just core, actually builds and passes on the platforms PORTING.md and
+  # CONTRIBUTING.md invite people to port to. Without this a Linux or
+  # Windows change can pass `checks` and `core` on this repo's own runners
+  # while the fallback code it touches has never once been compiled
+  # outside a contributor's own machine.
+  app-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri's own webview and tray-icon dependencies, not overterm's.
+      # https://v2.tauri.app/start/prerequisites/#linux
+      - name: Install Tauri's Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # ubuntu-latest has a real /bin/sh, so the workspace's tests run
+      # exactly like they do in `checks`, this time against the fallback
+      # implementation instead of the macOS one.
+      - name: Tests
+        run: cargo test --workspace
+
+  # Windows has no /bin/sh, and crates/core's session tests spawn one
+  # unconditionally (see session.rs's `sh()` test helper), so running the
+  # workspace test suite here would fail on that alone rather than on
+  # anything this job is meant to catch. Build and lint instead: with
+  # --all-targets that still compiles every test, which is what proves a
+  # change hasn't quietly pulled in something Unix-only.
+  app-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --all-targets
