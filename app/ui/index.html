@@ -112,6 +112,20 @@
         </header>
 
         <div class="sheet-body">
+          <!-- A newer release exists. Above everything else in the sheet,
+               because the dot on the settings control is what sent the
+               user here. Hidden the rest of the time, which is most of
+               it. -->
+          <div id="update" hidden>
+            <p id="update-line"></p>
+            <p class="note" id="update-warning"></p>
+            <div class="row update-actions">
+              <button type="button" id="update-now">Update now</button>
+              <button type="button" id="update-notes">What changed</button>
+              <button type="button" id="update-later">Not now</button>
+            </div>
+          </div>
+
           <h3>While an agent works</h3>
 
           <label class="row">
@@ -224,6 +238,15 @@
             <input type="range" id="opacity" min="10" max="100" step="1" />
             <span class="unit" id="opacity-value"></span>
           </label>
+
+          <h3>Updates</h3>
+
+          <label class="row">
+            <input type="checkbox" id="check-updates" />
+            <span>Tell me when there is a new release</span>
+          </label>
+
+          <p class="note" id="update-note"></p>
 
           <p class="note" id="settings-note"></p>
 

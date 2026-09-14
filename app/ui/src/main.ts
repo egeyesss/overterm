@@ -48,6 +48,19 @@ type PtyEvent =
 type Cues = { glow: boolean; sound: boolean };
 type Theme = 'light' | 'dark' | 'system';
 
+/// What the backend knows about releases. Worked out there, because the
+/// comparison has to treat 1.0.10 as newer than 1.0.9 and that is a rule
+/// worth having tests for.
+type UpdateStatus = {
+  current: string;
+  latest: string;
+  available: boolean;
+  dismissed: boolean;
+  homebrew: boolean;
+  installable: boolean;
+  releaseUrl: string;
+};
+
 /// Mirrors the Rust struct, so the keys are snake_case the whole way
 /// through: what the interface shows and what somebody reads in
 /// config.toml are then the same names.
@@ -58,6 +71,10 @@ type Settings = {
   opacity: number;
   hotkey: string;
   theme: Theme;
+  check_for_updates: boolean;
+  latest_version: string;
+  last_update_check: number;
+  update_notice_seen: string;
   window: {
     collapse_on_submit: boolean;
     collapse_delay_ms: number;
@@ -645,6 +662,7 @@ function showSettings(current: Settings) {
   panelHeight.value = String(current.window.panel_height);
   opacity.value = String(current.opacity);
   opacityValue.textContent = `${current.opacity}%`;
+  showUpdateSettings(current);
   applyTerminalSettings(current);
   // The delay only means anything if the window collapses at all.
   collapseDelay.closest('.row')!.classList.toggle('inactive', !current.window.collapse_on_submit);
@@ -674,6 +692,7 @@ function saveSettings() {
   const next: Settings = {
     ...settings,
     opacity: Number(opacity.value),
+    check_for_updates: checkUpdates.checked,
     window: {
       // Spread first: the size lives in here too and is applied through
       // its own command, so rebuilding this object from the checkboxes
@@ -845,6 +864,122 @@ piExtension.addEventListener('change', () => {
     });
 });
 
+// --- updates ---------------------------------------------------------
+
+const updateBox = field<HTMLElement>('update');
+const updateLine = field<HTMLElement>('update-line');
+const updateWarning = field<HTMLElement>('update-warning');
+const updateNow = field<HTMLButtonElement>('update-now');
+const updateNotes = field<HTMLButtonElement>('update-notes');
+const updateLater = field<HTMLButtonElement>('update-later');
+const updateNote = field<HTMLElement>('update-note');
+const checkUpdates = field<HTMLInputElement>('check-updates');
+const settingsButtons = document.querySelectorAll<HTMLElement>('.icon.settings-open');
+
+/// The last status the backend sent, kept for the link to the release.
+let release: UpdateStatus | null = null;
+
+/// Put a check's answer on screen.
+///
+/// A new release is a dot on the settings control and a line at the top
+/// of the sheet, and nothing else. Anything louder than that on every
+/// launch would be the opposite of a window that stays out of the way.
+function showUpdate(status: UpdateStatus) {
+  release = status;
+  const notice = status.available && !status.dismissed;
+  updateBox.hidden = !notice;
+  for (const button of settingsButtons) button.classList.toggle('has-update', notice);
+  if (!notice) return;
+
+  updateLine.textContent = `oTerm ${status.latest} is out. This is ${status.current}.`;
+  // Homebrew keeps its own record of what it installed, and the script
+  // replaces the bundle without telling it, so brew would be left
+  // describing a copy it no longer controls.
+  const canInstall = status.installable && !status.homebrew;
+  updateNow.hidden = !canInstall;
+  updateWarning.classList.toggle('warn', canInstall);
+  if (canInstall) {
+    // Said before the click rather than after it. The update quits the
+    // app, and somebody halfway through a session would otherwise watch
+    // their window and everything running in it disappear.
+    updateWarning.textContent =
+      'oTerm closes and restarts to update, and anything running in a session goes with it.';
+  } else if (status.homebrew) {
+    updateWarning.textContent =
+      'Homebrew installed this copy, so it is the one that should update it: brew upgrade --cask overterm';
+  } else {
+    updateWarning.textContent = 'Install it the way you installed this one.';
+  }
+}
+
+/// Read what the last check stored. Cheap: it is a file, not a request.
+function refreshUpdate() {
+  invoke<UpdateStatus>('update_status')
+    .then(showUpdate)
+    .catch((err) => console.error('[update] could not read the stored check:', err));
+}
+
+/// The check itself runs on launch, in the background, and says so when
+/// it finishes. Read as well as listened for, since a check that beat the
+/// webview to it has already been stored by the time anything is asked.
+listen<UpdateStatus>('overterm://update', (event) => showUpdate(event.payload));
+
+updateNow.addEventListener('click', () => {
+  invoke<string>('update_command')
+    .then(async (command) => {
+      // In a session the user can watch rather than hidden behind a
+      // progress bar. The app is a terminal: an install it shows is one
+      // somebody can see go wrong, and a shell is left behind to act on
+      // whatever the script said.
+      closeSettings();
+      const session = await addSession();
+      if (session) write(session, `${command}\r`);
+    })
+    .catch((err) => {
+      settingsNote.textContent = `Could not start the update: ${err}`;
+      settingsNote.classList.add('failed');
+    });
+});
+
+updateNotes.addEventListener('click', () => {
+  const url = release?.releaseUrl;
+  if (url) openUrl(url).catch((err) => console.error(`could not open ${url}:`, err));
+});
+
+updateLater.addEventListener('click', () => {
+  // Put away here rather than after the write, so the notice goes when it
+  // is clicked even if storing that fails. The worst that costs is being
+  // told again next launch.
+  updateBox.hidden = true;
+  for (const button of settingsButtons) button.classList.remove('has-update');
+  invoke('dismiss_update_notice').catch((err) =>
+    console.error('[update] could not put the notice away:', err),
+  );
+});
+
+/// When the stored check happened, in words. Roughly is enough: it is
+/// there to say the checking works, not to be read off a clock.
+function lastChecked(stamp: number): string {
+  if (!stamp) return 'Nothing has been checked yet.';
+  const minutes = Math.floor(Date.now() / 60_000 - stamp / 60);
+  if (minutes < 1) return 'Checked just now.';
+  if (minutes < 60) return `Checked ${minutes} minutes ago.`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Checked ${hours} hours ago.`;
+  return `Checked ${Math.floor(hours / 24)} days ago.`;
+}
+
+// Its own listener rather than a place in the list of inputs above:
+// that loop runs before this section, so the field is not there yet.
+checkUpdates.addEventListener('change', saveSettings);
+
+function showUpdateSettings(current: Settings) {
+  checkUpdates.checked = current.check_for_updates;
+  updateNote.textContent = current.check_for_updates
+    ? `Asks GitHub for the newest release on launch, and at most once every few hours after that. ${lastChecked(current.last_update_check)}`
+    : 'Off, so nothing is asked and a new release goes unnoticed.';
+}
+
 const firstRun = field<HTMLElement>('first-run');
 
 /// Say once that the app wrote into a config file the user owns.
@@ -875,6 +1010,9 @@ function openSettings() {
       settingsNote.classList.add('failed');
     });
   refreshHooks();
+  // Read again on every open. A check that finished before the webview
+  // was listening would otherwise not show up until the next launch.
+  refreshUpdate();
   settingsSheet.hidden = false;
 }
 
@@ -883,7 +1021,7 @@ function closeSettings() {
   active?.term.focus();
 }
 
-for (const button of document.querySelectorAll('.icon.settings-open')) {
+for (const button of settingsButtons) {
   button.addEventListener('click', openSettings);
 }
 settingsSheet.querySelector('.settings-close')!.addEventListener('click', closeSettings);
@@ -1162,7 +1300,11 @@ function activate(session: Session) {
 }
 
 /// Start another session and switch to it.
-async function addSession(): Promise<void> {
+///
+/// Answers with the session, so a caller with something to run in it can
+/// write to it once it exists. Nothing when the spawn failed, which the
+/// terminal itself has already said.
+async function addSession(): Promise<Session | null> {
   const { term, fit, search } = newTerminal();
 
   const pane = document.createElement('div');
@@ -1228,7 +1370,7 @@ async function addSession(): Promise<void> {
     });
   } catch (err) {
     term.write(`\r\n\x1b[31mfailed to start session: ${err}\x1b[0m\r\n`);
-    return;
+    return null;
   }
 
   term.attachCustomKeyEventHandler(handleTerminalKey);
@@ -1237,6 +1379,7 @@ async function addSession(): Promise<void> {
   term.onResize(({ cols, rows }) => {
     invoke('resize_pty', { sessionId: session.id, cols, rows }).catch(() => {});
   });
+  return session;
 }
 
 /// End a session and drop its tab. The last one is kept: a window with no
@@ -1271,6 +1414,10 @@ async function start() {
   } catch {
     // The defaults a terminal is built with are already correct.
   }
+
+  // What the last check stored, which is on disk before the window
+  // exists. The check running now reports itself when it finishes.
+  refreshUpdate();
 
   await addSession();
   applyMode(await invoke<WindowMode>('window_mode'));

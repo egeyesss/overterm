@@ -42,6 +42,21 @@ less install.sh
 sh install.sh
 ```
 
+### The app will tell you
+
+oTerm asks GitHub for the newest release when it starts, at most once
+every few hours, and a dot appears on the settings control when there is
+one. The sheet then names the new version and has a button that runs the
+line above for you, in a session you can watch rather than behind a
+progress bar. Updating quits the app and opens it again, so anything
+running in a session goes with it, which the button says before you press
+it.
+
+The check is off if you turn it off, in the same place. A copy installed
+with Homebrew is left alone: the sheet says to run
+`brew upgrade --cask overterm` instead, since the script would replace a
+bundle brew thinks it still owns.
+
 ## Uninstall
 
 ```sh

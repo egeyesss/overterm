@@ -7,6 +7,7 @@ mod pi;
 mod platform;
 mod pty;
 mod settings;
+mod update;
 
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -106,6 +107,10 @@ fn main() {
                 Ok(false) => {}
                 Err(e) => eprintln!("[pi] extension not installed: {e}"),
             }
+            // On its own thread and silent whatever happens, so a launch
+            // with no network costs nothing and says nothing. The dot on
+            // the settings control is the whole of what it can produce.
+            update::check_in_background(app.handle());
             // A taken hotkey fails to register; the app is still usable, so
             // report it instead of refusing to start.
             if let Err(e) =
@@ -150,6 +155,9 @@ fn main() {
             settings::save_settings,
             settings::set_panel_size,
             settings::size_preset,
+            update::update_status,
+            update::dismiss_update_notice,
+            update::update_command,
             app_version,
             quit_app,
         ])

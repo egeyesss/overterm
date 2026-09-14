@@ -86,6 +86,30 @@ pub struct Settings {
     /// Which theme to draw, or to follow the machine's own setting.
     pub theme: Theme,
 
+    /// Whether to look for a newer release at all.
+    ///
+    /// A preference rather than backend state: it is the one thing here
+    /// the settings sheet sets, and turning it off is how somebody who
+    /// would rather nothing reached out on launch says so.
+    pub check_for_updates: bool,
+
+    /// The newest release the last check found, without its leading `v`.
+    ///
+    /// Empty until a check succeeds. Stored rather than asked for every
+    /// time so the interface has an answer before the network does, and
+    /// so the app is not asking GitHub on every launch.
+    pub latest_version: String,
+
+    /// When that check happened, in seconds since the epoch. Zero means
+    /// never.
+    pub last_update_check: u64,
+
+    /// The release whose notice has been put away.
+    ///
+    /// A version rather than a flag, which is what makes the notice come
+    /// back for the next release instead of being silenced for good.
+    pub update_notice_seen: String,
+
     /// Which one-time fixes have already been applied to this file.
     ///
     /// Backend state rather than a preference: the UI never sends it and
@@ -396,6 +420,13 @@ impl Default for Settings {
             opacity: MAX_OPACITY,
             hotkey: DEFAULT_HOTKEY.into(),
             theme: Theme::default(),
+            // On, because an overlay nobody updates is one that quietly
+            // stays broken. It is one request every few hours, it says
+            // nothing when it fails, and the sheet turns it off.
+            check_for_updates: true,
+            latest_version: String::new(),
+            last_update_check: 0,
+            update_notice_seen: String::new(),
             settings_version: SETTINGS_VERSION,
             window: WindowSettings::default(),
             cues: CueSettings::default(),
@@ -909,6 +940,13 @@ pub fn save_settings<R: Runtime>(
         claude_hooks_installed: stored.claude_hooks_installed,
         claude_hooks_notice_seen: stored.claude_hooks_notice_seen,
         pi_extension_installed: stored.pi_extension_installed,
+        // What a check found and when, for the same reason. A check
+        // finishes whenever the network gets round to it, so the copy an
+        // open sheet is holding can be older than the file, and saving
+        // the one over the other would put the notice back.
+        latest_version: stored.latest_version,
+        last_update_check: stored.last_update_check,
+        update_notice_seen: stored.update_notice_seen,
         opacity,
         // Changing this has to register with the OS and can fail, so it
         // goes through set_hotkey and never through a bulk save.
@@ -971,6 +1009,10 @@ mod tests {
             hotkey: "CmdOrCtrl+Shift+K".into(),
             opacity: 60,
             theme: Theme::Light,
+            check_for_updates: false,
+            latest_version: "1.0.4".into(),
+            last_update_check: 1_760_000_000,
+            update_notice_seen: "1.0.4".into(),
             settings_version: SETTINGS_VERSION,
             window: WindowSettings {
                 collapse_on_submit: false,
@@ -997,6 +1039,18 @@ mod tests {
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
+    }
+
+    #[test]
+    fn looking_for_updates_is_on_until_somebody_turns_it_off() {
+        // And a file written before the field existed has to read as on
+        // rather than as false, or nobody who upgrades ever gets a check.
+        let path = scratch("no-update-keys");
+        std::fs::write(&path, "opacity = 100\n").expect("write");
+        let settings = load_from(&path);
+        assert!(settings.check_for_updates);
+        assert!(settings.latest_version.is_empty());
+        assert_eq!(settings.last_update_check, 0);
     }
 
     #[test]

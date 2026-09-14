@@ -455,6 +455,7 @@ body.state-busy .pill .dot {
 
 /* Window controls: collapse to the bar, expand back, hide entirely. */
 .icon {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -471,6 +472,20 @@ body.state-busy .pill .dot {
 .icon:hover {
   color: var(--ink);
   border-color: var(--line);
+}
+
+/* A newer release exists. The only thing it adds to the ordinary
+   interface is this dot, which is the whole point: a dialog on every
+   launch is the opposite of a window that stays out of the way. */
+.icon.settings-open.has-update::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--needs);
 }
 
 .icon svg {
@@ -848,12 +863,15 @@ body.state-needsInput {
     inset 0 0 0 3px var(--needs-ring);
 }
 
-/* The size presets, sitting under the two fields they are shortcuts for. */
-.row.presets {
+/* The size presets, sitting under the two fields they are shortcuts for,
+   and the update notice's buttons, which are the same shape. */
+.row.presets,
+.row.update-actions {
   gap: 6px;
 }
 
-.preset {
+.preset,
+#update button {
   flex: 1;
   padding: 6px 0;
   border: 1px solid var(--line);
@@ -864,9 +882,48 @@ body.state-needsInput {
   cursor: pointer;
 }
 
-.preset:hover {
+.preset:hover,
+#update button:hover {
   border-color: var(--ink-4);
   color: var(--ink);
+}
+
+/* A new release, said at the top of the sheet. Boxed rather than given a
+   heading of its own, because it is the one thing in here that is news
+   rather than a setting, and it is not there most of the time. */
+#update {
+  margin: 8px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tile);
+  background: var(--body);
+}
+
+#update[hidden],
+#update button[hidden] {
+  display: none;
+}
+
+#update-line {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+#update .note {
+  margin: 6px 0 0;
+}
+
+#update .row {
+  padding: 10px 0 0;
+}
+
+/* What the button costs, in the palette's red and before it is clicked.
+   The window closing is expected; a session going with it is the part
+   somebody has to be told. */
+.note.warn {
+  color: var(--busy);
 }
 
 /* Resize grips. A borderless window has no frame to grab, so these sit
