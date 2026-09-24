@@ -66,7 +66,10 @@ impl Follower {
         let Some(state) = self.mirror.state() else {
             return Ok(Update::default());
         };
-        let view = thread_view(state);
+        let mut view = thread_view(state);
+        if let Some(cwd) = view.cwd.as_mut() {
+            *cwd = crate::pty::shorten_home(cwd);
+        }
         let state_change = self.tracker.observe(&view);
         if self.view.as_ref() == Some(&view) {
             return Ok(Update {

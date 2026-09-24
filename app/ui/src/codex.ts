@@ -43,11 +43,6 @@ export type ChatActions = {
 /// keeps the log pinned there without yanking someone who scrolled up.
 const STICKY_BOTTOM_PX = 48;
 
-/// Home written as ~, the way the terminal tabs show their directory.
-export function shortPath(path: string | null): string | null {
-  return path?.replace(/^\/Users\/[^/]+(?=\/|$)/, '~') ?? null;
-}
-
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -288,7 +283,7 @@ export class CodexChat {
   private render(view: ThreadView) {
     this.view = view;
     this.titleEl.textContent = view.title;
-    this.cwdEl.textContent = shortPath(view.cwd) ?? '';
+    this.cwdEl.textContent = view.cwd ?? '';
     this.showProblem(null);
 
     const wanted: HTMLElement[] = [];

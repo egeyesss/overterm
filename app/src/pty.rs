@@ -187,11 +187,15 @@ fn identify(app: &AppHandle, session_id: &str) -> Option<Agent> {
 /// Write a path the way a shell prompt does, with the home directory as
 /// `~`. Done here rather than in the interface because this side is the
 /// one that knows where home is.
-fn shorten_home(path: &str) -> String {
+pub(crate) fn shorten_home(path: &str) -> String {
     let Some(home) = std::env::var_os("HOME") else {
         return path.to_string();
     };
     let home = home.to_string_lossy();
+    shorten_home_path(path, &home)
+}
+
+fn shorten_home_path(path: &str, home: &str) -> String {
     if home.is_empty() {
         return path.to_string();
     }
@@ -443,25 +447,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_path_under_home_is_written_with_a_tilde() {
-        // SAFETY: single-threaded test, and the value is restored below.
-        unsafe { std::env::set_var("HOME", "/Users/someone") };
+    fn paths_under_macos_and_linux_home_are_written_with_a_tilde() {
         assert_eq!(
-            shorten_home("/Users/someone/dev/overterm"),
+            shorten_home_path("/Users/someone/dev/overterm", "/Users/someone"),
             "~/dev/overterm"
         );
-        assert_eq!(shorten_home("/Users/someone"), "~");
+        assert_eq!(
+            shorten_home_path("/home/someone/project", "/home/someone"),
+            "~/project"
+        );
+        assert_eq!(shorten_home_path("/home/someone", "/home/someone"), "~");
     }
 
     #[test]
     fn a_path_outside_home_is_left_alone() {
-        unsafe { std::env::set_var("HOME", "/Users/someone") };
         // The prefix matches as text but is a different directory, so it
         // must not be rewritten.
         assert_eq!(
-            shorten_home("/Users/someone-else/dev"),
+            shorten_home_path("/home/someone-else/dev", "/home/someone"),
+            "/home/someone-else/dev"
+        );
+        assert_eq!(
+            shorten_home_path("/Users/someone-else/dev", "/Users/someone"),
             "/Users/someone-else/dev"
         );
-        assert_eq!(shorten_home("/opt/homebrew"), "/opt/homebrew");
+        assert_eq!(
+            shorten_home_path("/opt/homebrew", "/home/someone"),
+            "/opt/homebrew"
+        );
     }
 }

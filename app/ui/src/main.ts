@@ -32,7 +32,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
-import { CodexChat, shortPath, type ThreadView } from './codex';
+import { CodexChat, type ThreadView } from './codex';
 
 type AgentState = 'idle' | 'busy' | 'needsInput' | 'done';
 type WindowMode = 'bar' | 'panel';
@@ -1566,7 +1566,7 @@ async function connectCodex(session: CodexSession) {
   onEvent.onmessage = (msg) => {
     if (msg.event === 'view') {
       session.chat.update(msg.data);
-      session.cwd = shortPath(msg.data.cwd);
+      session.cwd = msg.data.cwd;
       session.tab.title = `Codex: ${msg.data.title}`;
       if (active === session) render();
     } else if (msg.event === 'agentStateChanged') {
