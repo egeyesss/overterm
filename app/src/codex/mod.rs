@@ -479,11 +479,11 @@ impl CodexSessions {
 }
 
 #[tauri::command(async)]
-pub fn codex_list_threads() -> Result<Vec<ThreadSummary>, String> {
+pub fn codex_list_threads(search_term: Option<String>) -> Result<Vec<ThreadSummary>, String> {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let binary = threads::codex_binary(home.as_deref(), std::env::var_os("PATH").as_deref())
         .ok_or("Codex is not installed. oTerm looks for the Codex or ChatGPT desktop app.")?;
-    threads::list_threads(&binary)
+    threads::list_threads(&binary, search_term.as_deref().map(str::trim))
 }
 
 #[tauri::command(async)]

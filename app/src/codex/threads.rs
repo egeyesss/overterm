@@ -55,7 +55,10 @@ pub fn codex_binary(home: Option<&Path>, path_var: Option<&OsStr>) -> Option<Pat
     bundled.chain(on_path).find(|candidate| candidate.is_file())
 }
 
-pub fn list_threads(binary: &Path) -> Result<Vec<ThreadSummary>, String> {
+pub fn list_threads(
+    binary: &Path,
+    search_term: Option<&str>,
+) -> Result<Vec<ThreadSummary>, String> {
     let mut child = Command::new(binary)
         .args(["app-server", "--stdio"])
         .stdin(Stdio::piped())
@@ -63,7 +66,7 @@ pub fn list_threads(binary: &Path) -> Result<Vec<ThreadSummary>, String> {
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", binary.display()))?;
-    let result = converse(&mut child);
+    let result = converse(&mut child, search_term);
     // Closing stdin is how app-server is asked to leave; the kill is for
     // one that does not.
     drop(child.stdin.take());
@@ -72,7 +75,7 @@ pub fn list_threads(binary: &Path) -> Result<Vec<ThreadSummary>, String> {
     result
 }
 
-fn converse(child: &mut Child) -> Result<Vec<ThreadSummary>, String> {
+fn converse(child: &mut Child, search_term: Option<&str>) -> Result<Vec<ThreadSummary>, String> {
     let mut stdin = child.stdin.take().ok_or("app-server has no stdin")?;
     let stdout = child.stdout.take().ok_or("app-server has no stdout")?;
     let (lines, incoming) = mpsc::channel();
@@ -122,14 +125,16 @@ fn converse(child: &mut Child) -> Result<Vec<ThreadSummary>, String> {
     )?;
     reply_to(1)?;
     send(json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}))?;
-    send(
-        json!({"jsonrpc": "2.0", "id": 2, "method": "thread/list", "params": {
-            "limit": THREAD_LIMIT,
-            "archived": false,
-            "sortKey": "updated_at",
-            "useStateDbOnly": true,
-        }}),
-    )?;
+    let mut params = json!({
+        "limit": THREAD_LIMIT,
+        "archived": false,
+        "sortKey": "updated_at",
+        "useStateDbOnly": true,
+    });
+    if let Some(search_term) = search_term.filter(|term| !term.is_empty()) {
+        params["searchTerm"] = json!(search_term);
+    }
+    send(json!({"jsonrpc": "2.0", "id": 2, "method": "thread/list", "params": params}))?;
     let listed = reply_to(2)?;
     Ok(listed
         .get("data")
@@ -252,7 +257,7 @@ mod tests {
         )
         .unwrap();
         executable_mode(&script);
-        let threads = list_threads(&script).unwrap();
+        let threads = list_threads(&script, None).unwrap();
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].title, "Test PR");
     }
@@ -272,8 +277,31 @@ mod tests {
         )
         .unwrap();
         executable_mode(&script);
-        let error = list_threads(&script).unwrap_err();
+        let error = list_threads(&script, None).unwrap_err();
         assert!(error.contains("state db locked"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn passes_a_search_term_to_the_thread_list_request() {
+        let dir = scratch("search-server");
+        let script = dir.join("codex");
+        std::fs::write(
+            &script,
+            concat!(
+                "#!/bin/sh\n",
+                "read _; printf '%s\\n' '{\"id\":1,\"result\":{}}'\n",
+                "read _; read request\n",
+                "case \"$request\" in\n",
+                "  *searchTerm*older*) printf '%s\\n' '{\"id\":2,\"result\":{\"data\":[]}}' ;;\n",
+                "  *) printf '%s\\n' '{\"id\":2,\"error\":{\"message\":\"search term missing\"}}' ;;\n",
+                "esac\n",
+                "read _\n"
+            ),
+        )
+        .unwrap();
+        executable_mode(&script);
+        assert!(list_threads(&script, Some("older")).unwrap().is_empty());
     }
 
     #[cfg(unix)]

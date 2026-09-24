@@ -1485,7 +1485,11 @@ const codexAdd = document.getElementById('codex-add') as HTMLButtonElement;
 const codexPicker = document.getElementById('codex-picker')!;
 const codexPickerNote = document.getElementById('codex-picker-note')!;
 const codexThreadList = document.getElementById('codex-thread-list')!;
+const codexThreadSearch = document.getElementById('codex-thread-search') as HTMLInputElement;
 codexAdd.innerHTML = codexMark;
+
+let codexSearchTimer: ReturnType<typeof setTimeout> | undefined;
+let codexRefreshGeneration = 0;
 
 /// "5m ago" rather than a timestamp: the list is for picking the thread
 /// you were just in, and recency is what tells them apart.
@@ -1504,14 +1508,20 @@ function codexSessionFor(threadId: string): CodexSession | undefined {
 }
 
 async function refreshCodexPicker() {
+  const searchTerm = codexThreadSearch.value.trim();
+  const generation = ++codexRefreshGeneration;
   codexPickerNote.classList.remove('failed');
   codexPickerNote.textContent = 'Reading your Codex threads…';
   codexThreadList.replaceChildren();
   try {
-    const threads = await invoke<CodexThread[]>('codex_list_threads');
+    const params = searchTerm ? { searchTerm } : undefined;
+    const threads = await invoke<CodexThread[]>('codex_list_threads', params);
+    if (generation !== codexRefreshGeneration || searchTerm !== codexThreadSearch.value.trim()) return;
     codexPickerNote.textContent = threads.length
       ? 'Pick a thread to carry into oTerm. The Codex desktop app keeps running it.'
-      : 'No Codex threads yet. Start one in the Codex desktop app first.';
+      : searchTerm
+        ? 'No threads match.'
+        : 'No Codex threads yet. Start one in the Codex desktop app first.';
     for (const thread of threads) {
       const row = document.createElement('button');
       row.type = 'button';
@@ -1531,18 +1541,32 @@ async function refreshCodexPicker() {
       codexThreadList.appendChild(row);
     }
   } catch (err) {
+    if (generation !== codexRefreshGeneration || searchTerm !== codexThreadSearch.value.trim()) return;
     codexPickerNote.textContent = String(err);
     codexPickerNote.classList.add('failed');
   }
 }
 
+codexThreadSearch.addEventListener('input', () => {
+  if (codexSearchTimer) clearTimeout(codexSearchTimer);
+  codexSearchTimer = setTimeout(() => {
+    codexSearchTimer = undefined;
+    void refreshCodexPicker();
+  }, 200);
+});
+
 function openCodexPicker() {
   if (mode !== 'panel') return;
   codexPicker.hidden = false;
+  codexThreadSearch.value = '';
   void refreshCodexPicker();
 }
 
 function closeCodexPicker() {
+  if (codexSearchTimer) {
+    clearTimeout(codexSearchTimer);
+    codexSearchTimer = undefined;
+  }
   codexPicker.hidden = true;
   focusActive();
 }

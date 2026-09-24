@@ -732,6 +732,30 @@ body.state-busy .pill .dot {
   margin-top: 12px;
 }
 
+.codex-picker-search {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.codex-picker-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--body);
+  color: var(--ink);
+  font: inherit;
+}
+
+.codex-picker-search input:focus {
+  outline: none;
+  border-color: var(--ink-4);
+}
+
 .codex-thread {
   display: flex;
   flex-direction: column;
