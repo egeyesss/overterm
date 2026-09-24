@@ -143,7 +143,7 @@ fn interrupt_request(
 fn answer_request(
     view: Option<&ThreadView>,
     thread_id: &str,
-    approve: bool,
+    decision: Value,
 ) -> Result<(Method, Value), String> {
     let approval = view
         .and_then(|view| view.approval.as_ref())
@@ -158,7 +158,7 @@ fn answer_request(
         json!({
             "conversationId": thread_id,
             "requestId": approval.request_id,
-            "decision": if approve { "accept" } else { "decline" },
+            "decision": decision,
         }),
     ))
 }
@@ -286,9 +286,9 @@ mod live {
             self.request(method, params)
         }
 
-        pub fn answer(&self, thread_id: &str, approve: bool) -> Result<(), String> {
+        pub fn answer(&self, thread_id: &str, decision: Value) -> Result<(), String> {
             let (method, params) =
-                answer_request(self.view(thread_id)?.as_ref(), thread_id, approve)?;
+                answer_request(self.view(thread_id)?.as_ref(), thread_id, decision)?;
             self.request(method, params)
         }
 
@@ -472,7 +472,7 @@ impl CodexSessions {
     pub fn interrupt(&self, _: &str) -> Result<(), String> {
         Err(Self::UNSUPPORTED.into())
     }
-    pub fn answer(&self, _: &str, _: bool) -> Result<(), String> {
+    pub fn answer(&self, _: &str, _: Value) -> Result<(), String> {
         Err(Self::UNSUPPORTED.into())
     }
     pub fn close(&self, _: &str, _: &Choreographer) {}
@@ -519,10 +519,10 @@ pub fn codex_interrupt(
 #[tauri::command(async)]
 pub fn codex_answer(
     thread_id: String,
-    approve: bool,
+    decision: Value,
     sessions: State<'_, CodexSessions>,
 ) -> Result<(), String> {
-    sessions.answer(&thread_id, approve)
+    sessions.answer(&thread_id, decision)
 }
 
 #[tauri::command(async)]
@@ -562,6 +562,17 @@ mod tests {
             reason: None,
             command: Some("touch x".into()),
             cwd: None,
+            available_decisions: None,
+        })
+    }
+
+    fn approval_with_decisions(
+        kind: ApprovalKind,
+        available_decisions: Vec<Value>,
+    ) -> Option<Approval> {
+        Some(Approval {
+            available_decisions: Some(available_decisions),
+            ..approval(kind).unwrap()
         })
     }
 
@@ -626,18 +637,38 @@ mod tests {
         let command = view(
             Activity::Waiting,
             Some("turn-1"),
-            approval(ApprovalKind::Command),
+            approval_with_decisions(
+                ApprovalKind::Command,
+                vec![
+                    json!("accept"),
+                    json!({"acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["/bin/zsh", "-lc", "touch x"]
+                    }}),
+                    json!("cancel"),
+                ],
+            ),
         );
         assert_eq!(
-            answer_request(Some(&command), "t1", true),
+            answer_request(Some(&command), "t1", json!("accept")),
             Ok((
                 Method::CommandApproval,
                 json!({"conversationId": "t1", "requestId": 2, "decision": "accept"})
             ))
         );
         assert_eq!(
-            answer_request(Some(&command), "t1", false).unwrap().1["decision"],
-            "decline"
+            answer_request(Some(&command), "t1", json!("cancel"))
+                .unwrap()
+                .1["decision"],
+            "cancel"
+        );
+        let amendment = json!({"acceptWithExecpolicyAmendment": {
+            "execpolicy_amendment": ["/bin/zsh", "-lc", "touch x"]
+        }});
+        assert_eq!(
+            answer_request(Some(&command), "t1", amendment.clone())
+                .unwrap()
+                .1["decision"],
+            amendment
         );
         let file = view(
             Activity::Waiting,
@@ -645,7 +676,9 @@ mod tests {
             approval(ApprovalKind::FileChange),
         );
         assert_eq!(
-            answer_request(Some(&file), "t1", true).unwrap().0,
+            answer_request(Some(&file), "t1", json!("accept"))
+                .unwrap()
+                .0,
             Method::FileApproval
         );
         let other = view(
@@ -653,8 +686,15 @@ mod tests {
             Some("turn-1"),
             approval(ApprovalKind::Other),
         );
-        assert!(answer_request(Some(&other), "t1", true).is_err());
-        assert!(answer_request(Some(&view(Activity::Idle, None, None)), "t1", true).is_err());
+        assert!(answer_request(Some(&other), "t1", json!("accept")).is_err());
+        assert!(
+            answer_request(
+                Some(&view(Activity::Idle, None, None)),
+                "t1",
+                json!("accept")
+            )
+            .is_err()
+        );
     }
 
     #[test]

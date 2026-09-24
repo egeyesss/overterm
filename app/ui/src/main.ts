@@ -1604,8 +1604,8 @@ function openCodexThread(thread: CodexThread) {
       await invoke('codex_send', { threadId: thread.id, text });
     },
     interrupt: () => interruptCodex(session),
-    answer: async (approve) => {
-      await invoke('codex_answer', { threadId: thread.id, approve });
+    answer: async (decision) => {
+      await invoke('codex_answer', { threadId: thread.id, decision });
     },
     reconnect: () => void connectCodex(session),
     draftChanged: (text) => {

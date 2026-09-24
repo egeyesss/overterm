@@ -114,6 +114,9 @@ pub struct Approval {
     pub reason: Option<String>,
     pub command: Option<String>,
     pub cwd: Option<String>,
+    /// The exact decisions offered by Codex, including object decisions.
+    /// `None` means the request did not provide usable decision metadata.
+    pub available_decisions: Option<Vec<Value>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -314,6 +317,11 @@ fn approval(request: &Value) -> Approval {
         reason: text(params, "reason"),
         command: text(params, "command"),
         cwd: text(params, "cwd"),
+        available_decisions: params
+            .get("availableDecisions")
+            .and_then(Value::as_array)
+            .filter(|decisions| !decisions.is_empty())
+            .cloned(),
     }
 }
 
@@ -470,6 +478,21 @@ mod tests {
             approval.command.as_deref(),
             Some("/bin/zsh -lc 'touch ~/Desktop/overterm-approval-probe.txt'")
         );
+        let decisions = json!([
+            "accept",
+            {"acceptWithExecpolicyAmendment": {
+                "execpolicy_amendment": ["/bin/zsh", "-lc", "touch ~/Desktop/overterm-approval-probe.txt"]
+            }},
+            "cancel"
+        ]);
+        assert_eq!(
+            approval.available_decisions,
+            Some(decisions.as_array().unwrap().clone())
+        );
+        assert_eq!(
+            serde_json::to_value(waiting).unwrap()["approval"]["availableDecisions"],
+            decisions
+        );
         assert!(
             approval
                 .reason
@@ -545,7 +568,40 @@ mod tests {
         let approval = view.approval.unwrap();
         assert_eq!(approval.kind, ApprovalKind::Other);
         assert_eq!(approval.request_id, json!("q1"));
+        assert_eq!(approval.available_decisions, None);
         assert_eq!(view.activity, Activity::Waiting);
+    }
+
+    #[test]
+    fn missing_or_malformed_available_decisions_fall_back_to_legacy_choices() {
+        let missing = state_with(
+            json!([]),
+            json!({"type": "active", "activeFlags": ["waitingOnApproval"]}),
+            json!([{
+                "method": "item/commandExecution/requestApproval",
+                "id": 2,
+                "params": {"kind": "command"}
+            }]),
+        );
+        assert_eq!(
+            thread_view(&missing).approval.unwrap().available_decisions,
+            None
+        );
+
+        let state = state_with(
+            json!([]),
+            json!({"type": "active", "activeFlags": ["waitingOnApproval"]}),
+            json!([{
+                "method": "item/commandExecution/requestApproval",
+                "id": 2,
+                "params": {
+                    "kind": "command",
+                    "availableDecisions": {"accept": true}
+                }
+            }]),
+        );
+        let view = thread_view(&state);
+        assert_eq!(view.approval.unwrap().available_decisions, None);
     }
 
     #[test]

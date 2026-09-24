@@ -23,18 +23,27 @@ type Item =
   | { kind: 'fileChange'; id: string; status: string; paths: string[] }
   | { kind: 'note'; id: string; text: string };
 
+type ApprovalDecision =
+  | string
+  | number
+  | boolean
+  | null
+  | ApprovalDecision[]
+  | { [key: string]: ApprovalDecision };
+
 type Approval = {
   requestId: number | string;
   kind: 'command' | 'fileChange' | 'other';
   reason: string | null;
   command: string | null;
   cwd: string | null;
+  availableDecisions?: ApprovalDecision[] | null;
 };
 
 export type ChatActions = {
   send(text: string): Promise<void>;
   interrupt(): void;
-  answer(approve: boolean): Promise<void>;
+  answer(decision: ApprovalDecision): Promise<void>;
   reconnect(): void;
   draftChanged(text: string): void;
 };
@@ -83,6 +92,35 @@ function statusLabel(status: string): string {
     default:
       return status;
   }
+}
+
+function isDecisionObject(decision: ApprovalDecision): decision is { [key: string]: ApprovalDecision } {
+  return typeof decision === 'object' && decision !== null && !Array.isArray(decision);
+}
+
+function humanizeDecisionKey(key: string): string {
+  const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : 'Choose this option';
+}
+
+function decisionLabel(decision: ApprovalDecision): string {
+  if (decision === 'accept') return 'Allow once';
+  if (decision === 'cancel' || decision === 'decline') return 'Decline';
+  if (isDecisionObject(decision)) {
+    if ('acceptWithExecpolicyAmendment' in decision) return 'Always allow this command';
+    const key = Object.keys(decision)[0];
+    return humanizeDecisionKey(key ?? 'unknown decision');
+  }
+  if (typeof decision === 'string') return humanizeDecisionKey(decision);
+  return `Choose ${typeof decision} option`;
+}
+
+function isAllowDecision(decision: ApprovalDecision): boolean {
+  return decision === 'accept' || (isDecisionObject(decision) && 'acceptWithExecpolicyAmendment' in decision);
+}
+
+function approvalDecisions(approval: Approval): ApprovalDecision[] {
+  return approval.availableDecisions?.length ? approval.availableDecisions : ['accept', 'decline'];
 }
 
 function renderItem(item: Item): HTMLElement {
@@ -368,24 +406,24 @@ export class CodexChat {
       return;
     }
     const buttons = el('div', 'codex-approval-actions');
-    const approve = el('button', 'approve', 'Approve');
-    const decline = el('button', 'decline', 'Decline');
-    for (const [button, value] of [
-      [approve, true],
-      [decline, false],
-    ] as const) {
+    for (const decision of approvalDecisions(approval)) {
+      const button = el('button', isAllowDecision(decision) ? 'approve' : undefined, decisionLabel(decision));
       button.type = 'button';
       button.addEventListener('click', async () => {
-        approve.disabled = decline.disabled = true;
+        buttons.querySelectorAll<HTMLButtonElement>('button').forEach((choice) => {
+          choice.disabled = true;
+        });
         try {
-          await this.actions.answer(value);
+          await this.actions.answer(decision);
         } catch (err) {
           this.showProblem(String(err));
-          approve.disabled = decline.disabled = false;
+          buttons.querySelectorAll<HTMLButtonElement>('button').forEach((choice) => {
+            choice.disabled = false;
+          });
         }
       });
+      buttons.appendChild(button);
     }
-    buttons.append(approve, decline);
     this.approvalEl.appendChild(buttons);
   }
 }
