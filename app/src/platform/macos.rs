@@ -390,17 +390,26 @@ mod argv_tests {
         let mut child = std::process::Command::new(node)
             .args([
                 "-e",
-                "process.title='pi'; setTimeout(() => {}, 5000)",
+                "setTimeout(() => { process.title = 'pi' }, 1500); setTimeout(() => {}, 15000)",
                 "/somewhere/bin/pi",
                 "--model",
                 "opus",
             ])
             .spawn()
             .expect("spawn node");
-        // Give it a moment to run the title assignment.
-        std::thread::sleep(std::time::Duration::from_millis(600));
-
-        let args = process_args(child.id() as i32);
+        // Node's startup time varies a lot on a busy CI runner, so wait for
+        // the title to land instead of sleeping a fixed time.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let args = loop {
+            let args = process_args(child.id() as i32);
+            let renamed = args
+                .as_ref()
+                .is_some_and(|args| args.first().map(String::as_str) == Some("pi"));
+            if renamed || std::time::Instant::now() >= deadline {
+                break args;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
         let name = process_name(child.id() as i32);
         let _ = child.kill();
         let _ = child.wait();
