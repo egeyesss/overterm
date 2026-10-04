@@ -409,8 +409,10 @@ mod tests {
                 "read _\n",
                 "while read req; do\n",
                 "  id=$(printf '%s' \"$req\" | sed -E 's/.*\"id\":([0-9]+).*/\\1/')\n",
-                "  printf '{\"id\":%s,\"result\":{\"data\":[{\"id\":\"x\",\"name\":\"nope\"}],\"nextCursor\":\"more\"}}\\n' \"$id\"\n",
+                // Counted before replying: once the last reply lands the
+                // client kills this script, which could beat a later echo.
                 "  echo x >> \"$0.requests\"\n",
+                "  printf '{\"id\":%s,\"result\":{\"data\":[{\"id\":\"x\",\"name\":\"nope\"}],\"nextCursor\":\"more\"}}\\n' \"$id\"\n",
                 "done\n"
             ),
         )
