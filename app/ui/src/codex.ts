@@ -1,3 +1,5 @@
+import { renderMarkdown } from './markdown';
+
 // A Codex desktop thread shown as a chat, inside a tab of its own.
 //
 // The backend sends the whole thread view every time something on screen
@@ -54,25 +56,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
-/// Agent replies are Markdown. Fenced code is the one part that is
-/// unreadable without its own block, so that is all that is interpreted;
-/// everything else stays as the text it is, and nothing is ever parsed as
-/// HTML.
-function fillMarkdownish(target: HTMLElement, text: string) {
-  target.replaceChildren();
-  const parts = text.split(/^```[^\n]*\n?/m);
-  parts.forEach((part, index) => {
-    if (!part) return;
-    if (index % 2 === 1) {
-      const pre = el('pre', 'codex-code');
-      pre.textContent = part.replace(/\n$/, '');
-      target.appendChild(pre);
-    } else {
-      target.appendChild(el('div', 'codex-text', part.replace(/^\n+|\n+$/g, '')));
-    }
-  });
-}
-
 function statusLabel(status: string): string {
   switch (status) {
     case 'inProgress':
@@ -92,7 +75,7 @@ function renderItem(item: Item): HTMLElement {
       break;
     case 'agent':
       node.classList.toggle('commentary', item.commentary);
-      fillMarkdownish(node, item.text);
+      renderMarkdown(node, item.text);
       break;
     case 'command': {
       const head = el('div', 'codex-command-head');

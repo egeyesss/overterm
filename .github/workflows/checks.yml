@@ -30,10 +30,35 @@ jobs:
       - name: Lints
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # The frontend is not built here on purpose: nothing under test
-      # needs it, and leaving it out keeps the run to one toolchain.
+      # The frontend gets its own job below, which keeps this one on a
+      # single toolchain.
       - name: Tests
         run: cargo test --workspace
+
+  # The UI has no framework, so tsc is its only type check, and vitest
+  # covers the Markdown renderer that every Codex reply goes through.
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Tests
+        run: npm test
 
   # crates/core is meant to have no UI and no platform dependencies, so a
   # Windows or Linux port can pick it up untouched. Nothing enforced that

@@ -1329,7 +1329,102 @@ body.mode-bar #grips {
 }
 
 .codex-text {
-  white-space: pre-wrap;
+  margin: 0;
+  white-space: normal;
+}
+
+.codex-heading {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.codex-heading:is(h1, h2) {
+  font-size: 1.15em;
+}
+
+.codex-heading:is(h3, h4, h5, h6) {
+  font-size: 1em;
+}
+
+.codex-list {
+  margin: 0;
+  padding-left: 24px;
+}
+
+.codex-list li + li {
+  margin-top: 3px;
+}
+
+.codex-list .codex-list {
+  margin-top: 3px;
+}
+
+/* Loose list items and quotes hold whole blocks, spaced like the reply. */
+.codex-list li > * + *,
+.codex-quote > * + * {
+  margin-top: 6px;
+}
+
+.codex-quote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--ink-4);
+  color: var(--ink-2);
+}
+
+.codex-rule {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--ring);
+}
+
+.codex-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.codex-table table {
+  border-collapse: collapse;
+}
+
+.codex-table th,
+.codex-table td {
+  padding: 3px 8px;
+  border: 1px solid var(--ring);
+  text-align: left;
+  vertical-align: top;
+  /* Cells keep whole words and the table scrolls, instead of splitting `markdown.ts` mid-name. */
+  overflow-wrap: normal;
+}
+
+.codex-table th {
+  background: var(--chrome);
+  font-weight: 600;
+}
+
+.codex-inline-code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--chrome);
+  box-shadow: 0 0 0 1px var(--line);
+  font-size: 0.92em;
+}
+
+.codex-link {
+  color: var(--done-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.codex-link:hover {
+  color: var(--ink);
+}
+
+.codex-link-host {
+  color: var(--ink-3);
 }
 
 .codex-item.agent {
@@ -1354,6 +1449,15 @@ body.mode-bar #grips {
   font-size: 0.92em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Code in a reply keeps its lines and scrolls sideways; wrapping would
+   misalign it. An approval's command still wraps, so its tail can't hide
+   off-screen while someone decides whether to allow it. */
+.codex-item.agent .codex-code {
+  overflow-x: auto;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .codex-output pre {
